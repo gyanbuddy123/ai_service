@@ -17,6 +17,11 @@ async def modify_question(req: ModifyRequest):
             question=req.question,
             modification_type=req.modification_type,
             instruction=req.instruction,
+            grade_level=req.grade_level,
+            subject=req.subject,
+            chapter=req.chapter,
+            topic=req.topic,
+            board=req.board,
         )
     except Exception as exc:
         logger.error(f"Modify failed for session {req.session_id}: {exc}")

@@ -38,7 +38,7 @@ Self-verification (do this before calling submit_mcq_batch):
 """
 
 
-def build_system_prompt(grade_level: int) -> str:
+def build_system_prompt(grade_level: int, subject: str = "", chapter: str = "", board: str = "CBSE") -> str:
     if grade_level <= 5:
         grade_note = "Use concrete, simple language. Short sentences. No jargon."
     elif grade_level <= 8:
@@ -48,18 +48,29 @@ def build_system_prompt(grade_level: int) -> str:
     else:
         grade_note = "Use college-preparatory academic language with full subject terminology."
 
+    parts = [f"Board: {board}", f"Grade: {grade_level}"]
+    if subject:
+        parts.append(f"Subject: {subject}")
+    if chapter:
+        parts.append(f"Chapter: {chapter}")
+    context_line = " | ".join(parts)
+
     return f"""You are an expert educational assessment designer specializing in Bloom's Taxonomy and Item Response Theory (IRT).
 
 Your task: generate high-quality multiple-choice questions (MCQs) from the provided chapter content.
 
-Grade calibration (Grade {grade_level}): {grade_note}
+Curriculum context: {context_line}
+Grade calibration: {grade_note}
 
 {_BLOOM_MAPPING}
 
-Distribution rules:
-  • n ≤ 5 questions: can be any single difficulty level if topic is narrow; spread across 2–3 levels if broad.
-  • n = 6–15 questions: spread across at least 3 difficulty levels; roughly 30% easy (1–2), 40% medium (3), 30% hard (4–5).
-  • n > 15 questions: full distribution across all 5 levels; 20% each or user-specified distribution.
+Difficulty distribution rules:
+  • Assess the topic's breadth and cognitive depth before deciding the distribution.
+  • A narrow, factual topic (e.g. definitions, dates) should lean toward levels 1–2.
+  • A conceptual or applied topic should lean toward levels 3–4.
+  • A complex, evaluative topic (e.g. analysis, design) should include levels 4–5.
+  • For any n, choose a distribution that honestly reflects what the topic supports — do not force an even spread if the topic does not warrant it.
+  • Avoid clustering all questions at one level unless the topic is genuinely limited in scope.
 
 {_HINT_RULES}
 
@@ -69,33 +80,28 @@ Output format: call the submit_mcq_batch tool with your questions. Do not output
 
 
 def build_user_prompt(
-    topic: str,
+    chapter: str,
     num_questions: int,
     context_text: str,
+    topic: str = "",
     existing_question_stems: list[str] | None = None,
-    difficulty_distribution: dict[str, int] | None = None,
 ) -> str:
     dedup_section = ""
     if existing_question_stems:
-        stems_list = "\n".join(f"  - {s}" for s in existing_question_stems[:20])
+        stems_list = "\n".join(f"  - {s}" for s in existing_question_stems)
         dedup_section = f"\nAlready-asked questions (do NOT repeat these topics):\n{stems_list}\n"
 
-    dist_section = ""
-    if difficulty_distribution:
-        dist_lines = "\n".join(
-            f"  Level {k}: {v} question(s)" for k, v in difficulty_distribution.items()
-        )
-        dist_section = f"\nRequired difficulty distribution:\n{dist_lines}\n"
+    topic_line = f"\nTopic (sub-topic focus): {topic}" if topic else ""
 
-    return f"""Topic: {topic}
+    return f"""Chapter: {chapter}{topic_line}
 Number of questions to generate: {num_questions}
-{dist_section}{dedup_section}
+{dedup_section}
 Chapter content (use ONLY the information below to create questions):
 ---
 {context_text[:12000]}
 ---
 
-Generate exactly {num_questions} MCQ question(s) on the topic above. Call submit_mcq_batch when ready."""
+Generate exactly {num_questions} MCQ question(s) on the chapter above. Decide the difficulty distribution based on the topic's nature before generating. Call submit_mcq_batch when ready."""
 
 
 SUBMIT_MCQ_BATCH_TOOL = {

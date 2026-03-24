@@ -59,13 +59,28 @@ class ClaudeVertexProvider(LLMProvider):
 
         response = await asyncio.get_event_loop().run_in_executor(None, _call)
 
-        # Extract tool_use block
+        # Extract tool_use block and normalize to option_text/is_correct format
         for block in response.content:
             if block.type == "tool_use" and block.name == "submit_mcq_batch":
-                return {
-                    "questions": block.input.get("questions", []),
-                    "model_used": self.model,
-                }
+                raw_questions = block.input.get("questions", [])
+                questions = []
+                for q in raw_questions:
+                    correct_keys = set(q.get("correct_answers", []))
+                    options = [
+                        {"option_text": o.get("text", ""), "is_correct": o.get("key", "") in correct_keys}
+                        for o in q.get("options", [])
+                    ]
+                    questions.append({
+                        "question_text": q.get("question_text", ""),
+                        "question_type": "mcq_single" if len(correct_keys) == 1 else "mcq_multiple",
+                        "options": options,
+                        "difficulty_level": q.get("difficulty_level", 2),
+                        "explanation": q.get("explanation", ""),
+                        "hint": q.get("hint", ""),
+                        "topic_tag": q.get("topic_tag", ""),
+                        "exp_points": 10,
+                    })
+                return {"questions": questions, "model_used": self.model}
 
         raise ValueError("Claude did not return a tool_use block")
 
@@ -102,7 +117,28 @@ class GeminiProvider(LLMProvider):
             "properties": {
                 "questions": {
                     "type": "array",
-                    "items": {"type": "object"},
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "question_text": {"type": "string"},
+                            "question_type": {"type": "string"},
+                            "difficulty_level": {"type": "integer"},
+                            "explanation": {"type": "string"},
+                            "hint": {"type": "string"},
+                            "topic_tag": {"type": "string"},
+                            "exp_points": {"type": "integer"},
+                            "options": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "option_text": {"type": "string"},
+                                        "is_correct": {"type": "boolean"},
+                                    },
+                                },
+                            },
+                        },
+                    },
                 }
             },
             "required": ["questions"],
@@ -121,7 +157,12 @@ class GeminiProvider(LLMProvider):
             )
 
         response = await asyncio.get_event_loop().run_in_executor(None, _call)
-        data = json.loads(response.text)
+        try:
+            data = json.loads(response.text)
+        except json.JSONDecodeError as e:
+            finish_reason = getattr(response.candidates[0], 'finish_reason', 'unknown') if response.candidates else 'unknown'
+            logger.error(f"Gemini JSON parse failed (finish_reason={finish_reason}): {e} — response length={len(response.text)}")
+            raise ValueError(f"Gemini returned invalid JSON (finish_reason={finish_reason}): {e}")
         return {"questions": data.get("questions", []), "model_used": self.model_name}
 
 
@@ -164,7 +205,9 @@ class MCQGenerationService:
         result["generation_time_ms"] = int((time.monotonic() - start) * 1000)
         return result
 
-    async def modify_question(self, question: dict, modification_type: str, instruction: str) -> dict:
+    async def modify_question(self, question: dict, modification_type: str, instruction: str,
+                              grade_level: int = 8, subject: str = "", chapter: str = "",
+                              topic: str = "", board: str = "CBSE") -> dict:
         """
         Send a single question + instruction to Claude for modification.
         Returns the modified question dict.
@@ -181,8 +224,18 @@ class MCQGenerationService:
 
         task = mod_type_instructions.get(modification_type, instruction)
 
+        ctx_parts = [f"Board: {board}", f"Grade: {grade_level}"]
+        if subject:
+            ctx_parts.append(f"Subject: {subject}")
+        if chapter:
+            ctx_parts.append(f"Chapter: {chapter}")
+        if topic:
+            ctx_parts.append(f"Topic: {topic}")
+        curriculum_context = " | ".join(ctx_parts)
+
         system = (
             "You are an expert educational assessment designer. "
+            f"Curriculum context: {curriculum_context}. "
             "You will receive a single MCQ question and a modification instruction. "
             "Return ONLY the modified question as a JSON object in exactly the same schema as the input. "
             "Do not add commentary."

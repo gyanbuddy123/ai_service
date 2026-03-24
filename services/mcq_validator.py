@@ -4,7 +4,6 @@ MCQ validation: schema checks, dedup, and hint quality verification.
 import hashlib
 import re
 
-# Common English stop words to ignore during hint quality check
 _STOP_WORDS = {
     'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
     'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
@@ -28,7 +27,6 @@ def _tokenize(text: str) -> set[str]:
 
 
 def hint_leaks_answer(hint: str, correct_option_texts: list[str]) -> bool:
-    """Return True if hint contains any meaningful token from a correct answer."""
     hint_tokens = _tokenize(hint)
     for option_text in correct_option_texts:
         answer_tokens = _tokenize(option_text)
@@ -41,13 +39,6 @@ def validate_questions(
     raw_questions: list[dict],
     seen_hashes: set[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    """
-    Validate a list of raw question dicts.
-
-    Returns:
-        (valid_questions, rejected_questions)
-        Each rejected dict has an extra 'rejection_reason' key.
-    """
     seen_hashes = seen_hashes or set()
     valid: list[dict] = []
     rejected: list[dict] = []
@@ -65,27 +56,31 @@ def validate_questions(
 
 
 def _check_question(q: dict, seen_hashes: set[str]) -> str | None:
-    """Return rejection reason string, or None if valid."""
     # Required fields
-    for field in ('question_text', 'options', 'correct_answers', 'difficulty_level'):
-        if not q.get(field):
-            return f"Missing required field: {field}"
+    if not q.get('question_text'):
+        return "Missing required field: question_text"
 
-    options = q['options']
-    correct_answers = q['correct_answers']
-
-    # Options must be a non-empty list with key+text
+    options = q.get('options', [])
     if not isinstance(options, list) or len(options) < 2:
         return "options must be a list with at least 2 items"
 
-    option_keys = {o.get('key') for o in options if isinstance(o, dict)}
-    for key in correct_answers:
-        if key not in option_keys:
-            return f"correct_answer key '{key}' not in options"
+    # Each option needs option_text and is_correct
+    for opt in options:
+        if not isinstance(opt, dict):
+            return "Each option must be an object"
+        if 'option_text' not in opt:
+            return "Each option must have option_text"
+        if 'is_correct' not in opt:
+            return "Each option must have is_correct"
+
+    # At least one correct answer
+    correct_options = [o for o in options if o.get('is_correct')]
+    if not correct_options:
+        return "No correct answer marked"
 
     # Difficulty range
     try:
-        diff = int(q['difficulty_level'])
+        diff = int(q.get('difficulty_level', 0))
     except (TypeError, ValueError):
         return "difficulty_level must be an integer"
     if not 1 <= diff <= 5:
@@ -99,10 +94,7 @@ def _check_question(q: dict, seen_hashes: set[str]) -> str | None:
     # Hint quality
     hint = q.get('hint', '')
     if hint:
-        correct_texts = [
-            o.get('text', '') for o in options
-            if isinstance(o, dict) and o.get('key') in correct_answers
-        ]
+        correct_texts = [o.get('option_text', '') for o in correct_options]
         if hint_leaks_answer(hint, correct_texts):
             return "Hint reveals the correct answer"
 

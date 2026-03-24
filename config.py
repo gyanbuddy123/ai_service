@@ -4,12 +4,12 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # GCP
     google_cloud_project: str = "caramel-goal-473111-t3"
-    google_cloud_location_claude: str = "us-east5"   # Claude in Vertex AI
-    google_cloud_location_gemini: str = "us-central1"  # Gemini in Vertex AI
+    google_cloud_location_claude: str = "asia-southeast1"  # Claude in Vertex AI — Singapore (closest to India)
+    google_cloud_location_gemini: str = "us-central1"      # Gemini 2.0 Flash available here
 
     # LLM models
-    claude_model: str = "claude-sonnet-4-6-20250514"
-    gemini_model: str = "gemini-2.0-flash-001"
+    claude_model: str = "claude-sonnet-4-6"
+    gemini_model: str = "gemini-2.0-flash"
 
     # Qdrant
     qdrant_host: str = "localhost"
