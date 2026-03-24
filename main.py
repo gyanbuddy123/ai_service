@@ -24,8 +24,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Gyaan Buddy AI Service",
-    description="MCQ generation and modification via Claude Sonnet 4.6 (Vertex AI)",
+    title="MCQ Generation Service",
+    description="MCQ generation and modification via Claude Sonnet (Vertex AI)",
     version="1.0.0",
     lifespan=lifespan,
 )

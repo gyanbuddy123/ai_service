@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # GCP
-    google_cloud_project: str = "caramel-goal-473111-t3"
+    google_cloud_project: str = ""
     google_cloud_location_claude: str = "asia-southeast1"  # Claude in Vertex AI — Singapore (closest to India)
     google_cloud_location_gemini: str = "us-central1"      # Gemini 2.0 Flash available here
 
