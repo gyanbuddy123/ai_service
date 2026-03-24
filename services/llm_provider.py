@@ -22,7 +22,6 @@ class LLMProvider(ABC):
         system_prompt: str,
         user_prompt: str,
         tool_schema: dict,
-        num_questions: int,
     ) -> dict:
         """Return a dict with 'questions' list and 'model_used' str."""
         ...
@@ -42,7 +41,6 @@ class ClaudeVertexProvider(LLMProvider):
         system_prompt: str,
         user_prompt: str,
         tool_schema: dict,
-        num_questions: int,
     ) -> dict:
         import asyncio
 
@@ -59,28 +57,9 @@ class ClaudeVertexProvider(LLMProvider):
 
         response = await asyncio.get_event_loop().run_in_executor(None, _call)
 
-        # Extract tool_use block and normalize to option_text/is_correct format
         for block in response.content:
             if block.type == "tool_use" and block.name == "submit_mcq_batch":
-                raw_questions = block.input.get("questions", [])
-                questions = []
-                for q in raw_questions:
-                    correct_keys = set(q.get("correct_answers", []))
-                    options = [
-                        {"option_text": o.get("text", ""), "is_correct": o.get("key", "") in correct_keys}
-                        for o in q.get("options", [])
-                    ]
-                    questions.append({
-                        "question_text": q.get("question_text", ""),
-                        "question_type": "mcq_single" if len(correct_keys) == 1 else "mcq_multiple",
-                        "options": options,
-                        "difficulty_level": q.get("difficulty_level", 2),
-                        "explanation": q.get("explanation", ""),
-                        "hint": q.get("hint", ""),
-                        "topic_tag": q.get("topic_tag", ""),
-                        "exp_points": 10,
-                    })
-                return {"questions": questions, "model_used": self.model}
+                return {"questions": block.input.get("questions", []), "model_used": self.model}
 
         raise ValueError("Claude did not return a tool_use block")
 
@@ -99,7 +78,6 @@ class GeminiProvider(LLMProvider):
         system_prompt: str,
         user_prompt: str,
         tool_schema: dict,
-        num_questions: int,
     ) -> dict:
         import asyncio
         import json
@@ -112,35 +90,10 @@ class GeminiProvider(LLMProvider):
             f"{user_prompt}"
         )
 
-        schema = {
+        questions_item = tool_schema["input_schema"]["properties"]["questions"]["items"]
+        gemini_schema = {
             "type": "object",
-            "properties": {
-                "questions": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "question_text": {"type": "string"},
-                            "question_type": {"type": "string"},
-                            "difficulty_level": {"type": "integer"},
-                            "explanation": {"type": "string"},
-                            "hint": {"type": "string"},
-                            "topic_tag": {"type": "string"},
-                            "exp_points": {"type": "integer"},
-                            "options": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "option_text": {"type": "string"},
-                                        "is_correct": {"type": "boolean"},
-                                    },
-                                },
-                            },
-                        },
-                    },
-                }
-            },
+            "properties": {"questions": {"type": "array", "items": questions_item}},
             "required": ["questions"],
         }
 
@@ -152,7 +105,7 @@ class GeminiProvider(LLMProvider):
                     temperature=0.3,
                     max_output_tokens=8192,
                     response_mime_type="application/json",
-                    response_schema=schema,
+                    response_schema=gemini_schema,
                 ),
             )
 
@@ -186,19 +139,18 @@ class MCQGenerationService:
         system_prompt: str,
         user_prompt: str,
         tool_schema: dict,
-        num_questions: int,
     ) -> dict:
         start = time.monotonic()
 
         try:
             result = await self._get_primary().generate_mcqs(
-                system_prompt, user_prompt, tool_schema, num_questions
+                system_prompt, user_prompt, tool_schema
             )
             logger.info(f"Claude generation succeeded ({len(result['questions'])} questions)")
         except Exception as exc:
             logger.warning(f"Claude failed ({exc}), falling back to Gemini")
             result = await self._get_fallback().generate_mcqs(
-                system_prompt, user_prompt, tool_schema, num_questions
+                system_prompt, user_prompt, tool_schema
             )
             logger.info(f"Gemini fallback succeeded ({len(result['questions'])} questions)")
 

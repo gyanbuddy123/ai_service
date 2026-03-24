@@ -4,6 +4,27 @@ Build system and user prompts for MCQ generation.
 from __future__ import annotations
 
 
+_MOBILE_FORMAT_RULES = """
+MOBILE DISPLAY RULES — strictly required (the app has NO LaTeX renderer):
+  FORBIDDEN — never output:
+    • LaTeX commands: \\frac{}{} \\sqrt{} \\int \\sum \\alpha \\beta \\pi \\times \\cdot \\sin \\cos \\log \\lim
+    • Dollar delimiters: $...$ or $$...$$ or \\(...\\) or \\[...\\]
+    • Caret for power: x^2 or x^{2}
+    • Underscore for subscript: H_2O or x_{1}
+    • Any backslash before a word: \\alpha, \\theta, \\Delta, etc.
+
+  USE INSTEAD:
+    Powers     : ⁰ ¹ ² ³ ⁴ ⁵  (e.g. x², cm², 10³)
+    Subscripts : ₀ ₁ ₂ ₃ ₄  (e.g. H₂O, CO₂, x₁)
+    Roots      : √ ∛  (e.g. √2, √(x+1))
+    Fractions  : write as a/b  (e.g. 1/2, (x+1)/(x-1))
+    Greek      : α β γ δ ε θ λ μ π σ φ ω Δ Σ Ω
+    Operators  : × ÷ ± ≤ ≥ ≠ ≈ ∞ ∫ ∑ ∂
+    Other      : ° · → ← ⇒ ∈ ∩ ∪
+
+  This rule applies to ALL fields: question_text, option text, hint, explanation.
+"""
+
 _BLOOM_MAPPING = """
 Difficulty ↔ Bloom's Taxonomy mapping (follow strictly):
   Level 1 — REMEMBER: recall facts, definitions, dates
@@ -62,6 +83,7 @@ Your task: generate high-quality multiple-choice questions (MCQs) from the provi
 Curriculum context: {context_line}
 Grade calibration: {grade_note}
 
+{_MOBILE_FORMAT_RULES}
 {_BLOOM_MAPPING}
 
 Difficulty distribution rules:
@@ -98,10 +120,10 @@ Number of questions to generate: {num_questions}
 {dedup_section}
 Chapter content (use ONLY the information below to create questions):
 ---
-{context_text[:12000]}
+{context_text}
 ---
 
-Generate exactly {num_questions} MCQ question(s) on the chapter above. Decide the difficulty distribution based on the topic's nature before generating. Call submit_mcq_batch when ready."""
+Generate exactly {num_questions} MCQ question(s) focused strictly on the topic "{topic}" using only the content provided above. Decide the difficulty distribution based on the topic's nature before generating. Call submit_mcq_batch when ready."""
 
 
 SUBMIT_MCQ_BATCH_TOOL = {
@@ -128,25 +150,20 @@ SUBMIT_MCQ_BATCH_TOOL = {
                     "type": "object",
                     "properties": {
                         "question_text": {"type": "string"},
+                        "question_type": {"type": "string", "enum": ["mcq_single", "mcq_multiple"]},
                         "options": {
                             "type": "array",
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "key": {"type": "string", "enum": ["A", "B", "C", "D"]},
-                                    "text": {"type": "string"},
+                                    "option_text": {"type": "string"},
+                                    "is_correct": {"type": "boolean"},
                                 },
-                                "required": ["key", "text"],
+                                "required": ["option_text", "is_correct"],
                             },
                             "minItems": 4,
                             "maxItems": 4,
                         },
-                        "correct_answers": {
-                            "type": "array",
-                            "items": {"type": "string", "enum": ["A", "B", "C", "D"]},
-                            "minItems": 1,
-                        },
-                        "answer_type": {"type": "string", "enum": ["single", "multiple"]},
                         "hint": {"type": "string"},
                         "explanation": {"type": "string"},
                         "difficulty_level": {"type": "integer", "minimum": 1, "maximum": 5},
@@ -157,7 +174,7 @@ SUBMIT_MCQ_BATCH_TOOL = {
                         "topic_tag": {"type": "string"},
                     },
                     "required": [
-                        "question_text", "options", "correct_answers", "answer_type",
+                        "question_text", "question_type", "options",
                         "hint", "explanation", "difficulty_level", "bloom_category",
                     ],
                 },

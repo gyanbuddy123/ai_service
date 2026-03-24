@@ -84,7 +84,6 @@ async def generate_assessment(req: GenerateRequest):
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 tool_schema=SUBMIT_MCQ_BATCH_TOOL,
-                num_questions=batch_n,
             )
         except Exception as exc:
             logger.error(f"Generation failed for session {req.session_id}: {exc}")
