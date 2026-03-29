@@ -1,178 +1,255 @@
 """
 Qdrant vector store service.
 - Collection: pdf_chunks (size=768, cosine distance)
-- Payload fields: pdf_id, chapter_id, subject_id, class_id, page_number, chunk_index, text
-- Embedding model: Vertex AI text-embedding-005 (768-dim)
+- Payload fields: pdf_id, chapter_id, page_number, chunk_index, text, is_active, section_header
+- Embedding model: Vertex AI text-multilingual-embedding-002 (768-dim)
+- Retrieval: hybrid search — dense (semantic) + keyword (MatchText), fused with RRF
 """
 from __future__ import annotations
 
 import logging
+import re
 from functools import lru_cache
 
 from config import settings
 
 logger = logging.getLogger("ai_service.vector_store")
 
-COLLECTION_NAME = "pdf_chunks"
+COLLECTION_NAME = settings.qdrant_collection
 EMBEDDING_DIM = 768
-CHUNK_SIZE_CHARS = 1500
-CHUNK_OVERLAP_CHARS = 200
+CHUNK_SIZE_CHARS = settings.chunk_size_chars
+CHUNK_OVERLAP_CHARS = settings.chunk_overlap_chars
+
+# RRF rank constant (standard: 60)
+_RRF_K = 60
+# Candidates per search leg — internal tuning, not env-configurable
+_SEARCH_CANDIDATES = 20
+# Final top-k returned from hybrid search
+_RETRIEVE_TOP_K = settings.retrieve_top_k
 
 
 @lru_cache(maxsize=1)
 def _get_qdrant():
     from qdrant_client import QdrantClient
-    return QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+    kwargs = {"host": settings.qdrant_host, "port": settings.qdrant_port}
+    if settings.qdrant_api_key:
+        kwargs["api_key"] = settings.qdrant_api_key
+    return QdrantClient(**kwargs)
 
 
 def ensure_collection() -> None:
-    """Create the pdf_chunks collection if it doesn't exist."""
-    from qdrant_client.http.models import Distance, VectorParams, PayloadSchemaType
+    """Create the pdf_chunks collection if it doesn't exist, and ensure all indexes."""
+    from qdrant_client.http.models import (
+        Distance, VectorParams, PayloadSchemaType, TextIndexParams, TokenizerType,
+    )
 
     client = _get_qdrant()
     existing = {c.name for c in client.get_collections().collections}
-    if COLLECTION_NAME in existing:
-        logger.info(f"Qdrant collection '{COLLECTION_NAME}' already exists")
-        return
 
-    client.create_collection(
-        collection_name=COLLECTION_NAME,
-        vectors_config=VectorParams(size=EMBEDDING_DIM, distance=Distance.COSINE),
-    )
-
-    # Create payload indexes for fast filtering
-    client.create_payload_index(COLLECTION_NAME, "pdf_id", PayloadSchemaType.KEYWORD)
-    client.create_payload_index(COLLECTION_NAME, "chapter_id", PayloadSchemaType.KEYWORD)
-    logger.info(f"Qdrant collection '{COLLECTION_NAME}' created with payload indexes")
-
-
-async def embed_text(text: str) -> list[float]:
-    """Embed a single text using Vertex AI text-embedding-005."""
-    import asyncio
-    import vertexai
-    from vertexai.language_models import TextEmbeddingModel
-
-    vertexai.init(
-        project=settings.google_cloud_project,
-        location=settings.google_cloud_location_gemini,  # us-central1 supports embeddings
-    )
-
-    def _call():
-        model = TextEmbeddingModel.from_pretrained("text-embedding-005")
-        result = model.get_embeddings([text])
-        return result[0].values
-
-    return await asyncio.get_event_loop().run_in_executor(None, _call)
-
-
-async def embed_batch(texts: list[str]) -> list[list[float]]:
-    """Embed a batch of texts — Vertex AI supports up to 250 per call."""
-    import asyncio
-    import vertexai
-    from vertexai.language_models import TextEmbeddingModel
-
-    vertexai.init(
-        project=settings.google_cloud_project,
-        location=settings.google_cloud_location_gemini,
-    )
-
-    def _call():
-        model = TextEmbeddingModel.from_pretrained("text-embedding-005")
-        results = model.get_embeddings(texts)
-        return [r.values for r in results]
-
-    return await asyncio.get_event_loop().run_in_executor(None, _call)
-
-
-async def retrieve_context(
-    chapter_id: str,
-    query: str,
-    top_k: int = 6,
-) -> str:
-    """
-    Query Qdrant for the top-k most relevant chunks for a chapter.
-    Returns them joined as a single context string.
-    """
-    import asyncio
-    from qdrant_client.http.models import Filter, FieldCondition, MatchValue
-
-    query_vector = await embed_text(query)
-    client = _get_qdrant()
-
-    def _search():
-        return client.query_points(
+    if COLLECTION_NAME not in existing:
+        client.create_collection(
             collection_name=COLLECTION_NAME,
-            query=query_vector,
-            query_filter=Filter(
-                must=[FieldCondition(key="chapter_id", match=MatchValue(value=chapter_id))]
+            vectors_config=VectorParams(size=EMBEDDING_DIM, distance=Distance.COSINE),
+        )
+        logger.info(f"Qdrant collection '{COLLECTION_NAME}' created")
+
+    # Keyword payload indexes
+    for field, schema_type in [
+        ("pdf_id", PayloadSchemaType.KEYWORD),
+        ("chapter_id", PayloadSchemaType.KEYWORD),
+        ("is_active", PayloadSchemaType.BOOL),
+        ("section_header", PayloadSchemaType.KEYWORD),
+    ]:
+        try:
+            client.create_payload_index(COLLECTION_NAME, field, schema_type)
+        except Exception:
+            pass  # index already exists
+
+    # Full-text index on text for hybrid search (Qdrant >= 1.5)
+    try:
+        client.create_payload_index(
+            collection_name=COLLECTION_NAME,
+            field_name="text",
+            field_schema=TextIndexParams(
+                type="text",
+                tokenizer=TokenizerType.WORD,
+                min_token_len=3,
+                lowercase=True,
             ),
-            limit=top_k,
-            with_payload=True,
-        ).points
+        )
+    except Exception:
+        pass  # index already exists or Qdrant version doesn't support it
 
-    results = await asyncio.get_event_loop().run_in_executor(None, _search)
+    logger.info(f"Qdrant collection '{COLLECTION_NAME}' ready")
 
-    if not results:
-        logger.warning(f"No Qdrant results for chapter_id={chapter_id}")
-        return ""
+    # Backfill is_active=True on any existing points that lack the field
+    _backfill_is_active(client)
 
-    # Sort by page then chunk order, join text
-    chunks = sorted(
-        results,
-        key=lambda r: (r.payload.get("page_number", 0), r.payload.get("chunk_index", 0)),
-    )
-    return "\n\n".join(r.payload.get("text", "") for r in chunks)
+
+def _backfill_is_active(client) -> None:
+    """Set is_active=True on existing points that don't have the field."""
+    from qdrant_client.http.models import Filter, IsNullCondition, PayloadField
+
+    try:
+        null_filter = Filter(
+            must=[IsNullCondition(is_null=PayloadField(key="is_active"))]
+        )
+        client.set_payload(
+            collection_name=COLLECTION_NAME,
+            payload={"is_active": True},
+            points=null_filter,
+        )
+        logger.info("Backfilled is_active=True on existing Qdrant points")
+    except Exception as exc:
+        logger.warning(f"is_active backfill skipped: {exc}")
+
+def _is_section_header(line: str) -> bool:
+    """
+    Heuristic: a line is a section header if it is short, and is either
+    numbered (e.g. "1. Introduction", "2.3 Photosynthesis"),
+    all-caps (len > 3), or starts with '#'.
+    """
+    stripped = line.strip()
+    if not stripped or len(stripped) > 120:
+        return False
+    if stripped.startswith('#'):
+        return True
+    if re.match(r'^\d+[\.\)]\s', stripped):
+        return True
+    if len(stripped) > 3 and stripped == stripped.upper() and stripped.replace(' ', '').isalpha():
+        return True
+    return False
+
+def _split_if_oversized(
+    text: str,
+    pdf_id: str,
+    chapter_id: str,
+    page_number: int,
+    start_index: int,
+    section_header: str,
+) -> list[dict]:
+    """
+    If text exceeds CHUNK_SIZE_CHARS, split at sentence boundaries.
+    Returns list of chunk dicts (without id, assigned later).
+    """
+    if len(text) <= CHUNK_SIZE_CHARS:
+        return [{
+            "text": text,
+            "page_number": page_number,
+            "chunk_index": start_index,
+            "pdf_id": pdf_id,
+            "chapter_id": chapter_id,
+            "section_header": section_header,
+        }]
+
+    # Split at sentence boundaries (period/question/exclamation + space)
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    result = []
+    idx = start_index
+    bucket = ""
+    for sentence in sentences:
+        candidate = (bucket + " " + sentence).strip() if bucket else sentence
+        if len(candidate) > CHUNK_SIZE_CHARS and bucket:
+            result.append({
+                "text": bucket.strip(),
+                "page_number": page_number,
+                "chunk_index": idx,
+                "pdf_id": pdf_id,
+                "chapter_id": chapter_id,
+                "section_header": section_header,
+            })
+            idx += 1
+            bucket = sentence
+        else:
+            bucket = candidate
+    if bucket.strip():
+        if len(bucket) > CHUNK_SIZE_CHARS:
+            # Single unsplittable sentence (no punctuation) — emit as-is with a warning
+            logger.warning(
+                f"Chunk at index {idx} exceeds CHUNK_SIZE_CHARS ({len(bucket)} chars) "
+                "— no sentence boundary found, emitting oversized chunk."
+            )
+        result.append({
+            "text": bucket.strip(),
+            "page_number": page_number,
+            "chunk_index": idx,
+            "pdf_id": pdf_id,
+            "chapter_id": chapter_id,
+            "section_header": section_header,
+        })
+    return result
 
 
 def chunk_pages(pages: list[dict], pdf_id: str, chapter_id: str) -> list[dict]:
-    """Sliding-window character chunking with page metadata."""
+    """
+    Paragraph-aware chunking with overlap:
+    1. Split on double-newlines (paragraph boundaries).
+    2. Detect section headers — flush + hard reset before each new section.
+    3. Merge paragraphs until CHUNK_SIZE_CHARS, then flush.
+    4. Seed the next chunk with the last CHUNK_OVERLAP_CHARS of the flushed chunk
+       so concepts at chunk boundaries are never split out of context.
+    5. Split oversized paragraphs at sentence boundaries.
+    Returns a list of chunk dicts with page_number, section_header, etc.
+    """
     import uuid as _uuid
 
-    full_text = ""
-    page_boundaries: list[tuple[int, int]] = []
+    chunks: list[dict] = []
+    current_section = ""
+
+    def _flush(text: str, page_number: int) -> str:
+        """Append split chunks; return overlap seed for the next accumulation."""
+        new_chunks = _split_if_oversized(
+            text, pdf_id, chapter_id, page_number, len(chunks), current_section
+        )
+        chunks.extend(new_chunks)
+        if new_chunks:
+            last_text = new_chunks[-1]["text"]
+            return last_text[-CHUNK_OVERLAP_CHARS:] if len(last_text) > CHUNK_OVERLAP_CHARS else ""
+        return ""
 
     for page in pages:
-        start = len(full_text)
-        full_text += page["text"] + "\n\n"
-        page_boundaries.append((start, page["page_number"]))
+        page_number = page["page_number"]
+        text = page["text"]
+        raw_paragraphs = re.split(r'\n{2,}', text)
+        accumulated = ""
 
-    def page_for_offset(offset: int) -> int:
-        page = page_boundaries[0][1]
-        for char_start, page_num in page_boundaries:
-            if offset >= char_start:
-                page = page_num
+        for para in raw_paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+
+            # Detect section headers — flush and hard-reset (no overlap across sections)
+            first_line = para.split('\n')[0]
+            if _is_section_header(first_line):
+                if accumulated.strip():
+                    _flush(accumulated.strip(), page_number)
+                accumulated = ""   # hard reset — no overlap at section boundary
+                current_section = first_line.strip()
+                para_body = '\n'.join(para.split('\n')[1:]).strip()
+                if not para_body:
+                    continue
+                para = para_body
+
+            candidate = (accumulated + "\n\n" + para).strip() if accumulated else para
+            if len(candidate) > CHUNK_SIZE_CHARS and accumulated:
+                overlap = _flush(accumulated.strip(), page_number)
+                accumulated = (overlap + "\n\n" + para).strip() if overlap else para
             else:
-                break
-        return page
+                accumulated = candidate
 
-    chunks = []
-    chunk_index = 0
-    start = 0
-    total_len = len(full_text)
+        # Flush remaining at end of page (no overlap needed — next page starts fresh)
+        if accumulated.strip():
+            _flush(accumulated.strip(), page_number)
 
-    while start < total_len:
-        end = min(start + CHUNK_SIZE_CHARS, total_len)
-        chunk_text = full_text[start:end].strip()
-        if chunk_text:
-            chunks.append({
-                "id": str(_uuid.uuid4()),
-                "text": chunk_text,
-                "page_number": page_for_offset(start),
-                "chunk_index": chunk_index,
-                "pdf_id": pdf_id,
-                "chapter_id": chapter_id,
-            })
-            chunk_index += 1
-        if end >= total_len:
-            break
-        start = end - CHUNK_OVERLAP_CHARS
+    # Assign UUIDs
+    for chunk in chunks:
+        chunk["id"] = str(_uuid.uuid4())
 
     return chunks
 
-
 async def embed_and_store(pdf_id: str, chapter_id: str, pages: list[dict]) -> int:
     """
-    Full pipeline: chunk pages → embed → upsert to Qdrant.
+    Full pipeline: chunk pages → embed → upsert to Qdrant with is_active=True.
     Returns number of chunks stored.
     """
     import asyncio
@@ -185,7 +262,6 @@ async def embed_and_store(pdf_id: str, chapter_id: str, pages: list[dict]) -> in
         logger.warning(f"No chunks generated for pdf_id={pdf_id}")
         return 0
 
-    # Embed in batches of 50
     BATCH = 50
     all_texts = [c["text"] for c in chunks]
     all_vectors: list[list[float]] = []
@@ -194,16 +270,15 @@ async def embed_and_store(pdf_id: str, chapter_id: str, pages: list[dict]) -> in
         project=settings.google_cloud_project,
         location=settings.google_cloud_location_gemini,
     )
+    embed_model = TextEmbeddingModel.from_pretrained(settings.embedding_model)
 
     def _embed(texts):
-        model = TextEmbeddingModel.from_pretrained("text-embedding-005")
-        return [r.values for r in model.get_embeddings(texts)]
+        return [r.values for r in embed_model.get_embeddings(texts)]
 
     for i in range(0, len(all_texts), BATCH):
         vectors = await asyncio.get_event_loop().run_in_executor(None, _embed, all_texts[i:i + BATCH])
         all_vectors.extend(vectors)
 
-    # Upsert to Qdrant in batches of 100
     client = _get_qdrant()
     points = [
         PointStruct(
@@ -215,6 +290,8 @@ async def embed_and_store(pdf_id: str, chapter_id: str, pages: list[dict]) -> in
                 "chunk_index": chunk["chunk_index"],
                 "pdf_id": chunk["pdf_id"],
                 "chapter_id": chunk["chapter_id"],
+                "section_header": chunk.get("section_header", ""),
+                "is_active": True,
             },
         )
         for chunk, vector in zip(chunks, all_vectors)
@@ -227,20 +304,198 @@ async def embed_and_store(pdf_id: str, chapter_id: str, pages: list[dict]) -> in
     logger.info(f"Stored {len(points)} chunks for pdf_id={pdf_id}, chapter_id={chapter_id}")
     return len(points)
 
+async def embed_text(text: str) -> list[float]:
+    """Embed a single text using Vertex AI text-embedding-005."""
+    import asyncio
+    import vertexai
+    from vertexai.language_models import TextEmbeddingModel
 
-def delete_by_pdf_id(pdf_id: str) -> int:
+    vertexai.init(
+        project=settings.google_cloud_project,
+        location=settings.google_cloud_location_gemini,
+    )
+
+    def _call():
+        model = TextEmbeddingModel.from_pretrained(settings.embedding_model)
+        result = model.get_embeddings([text])
+        return result[0].values
+
+    return await asyncio.get_event_loop().run_in_executor(None, _call)
+
+def _rrf_merge(
+    dense_hits: list,
+    keyword_hits: list,
+    top_k: int,
+) -> list:
     """
-    Delete all vectors whose payload.pdf_id == pdf_id.
-    Returns the number of points deleted.
+    Reciprocal Rank Fusion of two result lists.
+    Each hit must have an .id attribute.
+    Returns merged list sorted by RRF score descending, truncated to top_k.
+    """
+    scores: dict = {}
+    hit_map: dict = {}
+
+    for rank, hit in enumerate(dense_hits):
+        scores[hit.id] = scores.get(hit.id, 0.0) + 1.0 / (_RRF_K + rank + 1)
+        hit_map[hit.id] = hit
+
+    for rank, hit in enumerate(keyword_hits):
+        scores[hit.id] = scores.get(hit.id, 0.0) + 1.0 / (_RRF_K + rank + 1)
+        hit_map[hit.id] = hit
+
+    sorted_ids = sorted(scores, key=lambda k: scores[k], reverse=True)
+    return [hit_map[i] for i in sorted_ids[:top_k]]
+
+
+async def retrieve_context(
+    chapter_id: str,
+    query: str,
+    top_k: int = _RETRIEVE_TOP_K,
+) -> str:
+    """
+    Hybrid retrieval: dense semantic search + keyword (MatchText) search, fused with RRF.
+    Only returns chunks where is_active=True.
+    Returns the top-k chunks joined as a single context string.
+    """
+    import asyncio
+    from qdrant_client.http.models import Filter, FieldCondition, MatchValue, MatchText
+
+    query_vector = await embed_text(query)
+    client = _get_qdrant()
+
+    base_filter = Filter(
+        must=[
+            FieldCondition(key="chapter_id", match=MatchValue(value=chapter_id)),
+            FieldCondition(key="is_active", match=MatchValue(value=True)),
+        ]
+    )
+
+    keyword_filter = Filter(
+        must=[
+            FieldCondition(key="chapter_id", match=MatchValue(value=chapter_id)),
+            FieldCondition(key="is_active", match=MatchValue(value=True)),
+            FieldCondition(key="text", match=MatchText(text=query)),
+        ]
+    )
+
+    def _dense_search():
+        return client.query_points(
+            collection_name=COLLECTION_NAME,
+            query=query_vector,
+            query_filter=base_filter,
+            limit=_SEARCH_CANDIDATES,
+            with_payload=True,
+        ).points
+
+    def _keyword_search():
+        try:
+            return client.query_points(
+                collection_name=COLLECTION_NAME,
+                query=query_vector,
+                query_filter=keyword_filter,
+                limit=_SEARCH_CANDIDATES,
+                with_payload=True,
+            ).points
+        except Exception as exc:
+            logger.warning(f"Keyword search failed (falling back to dense only): {exc}")
+            return []
+
+    dense_hits, keyword_hits = await asyncio.gather(
+        asyncio.get_event_loop().run_in_executor(None, _dense_search),
+        asyncio.get_event_loop().run_in_executor(None, _keyword_search),
+    )
+
+    if not dense_hits and not keyword_hits:
+        logger.warning(f"No Qdrant results for chapter_id={chapter_id}")
+        return ""
+
+    merged = _rrf_merge(dense_hits, keyword_hits, top_k=top_k)
+
+    # Sort merged results by document order for coherent reading
+    chunks = sorted(
+        merged,
+        key=lambda r: (r.payload.get("page_number", 0), r.payload.get("chunk_index", 0)),
+    )
+    return "\n\n".join(r.payload.get("text", "") for r in chunks)
+
+
+async def resolve_context(
+    chapter_id: str,
+    query: str,
+    fallback_text: str,
+    log_prefix: str = "",
+) -> str:
+    """
+    Shared context resolver used by both generate and modify endpoints.
+    Tries Qdrant first; falls back to fallback_text if no chunks found or on error.
+    Raises ValueError if no context is available at all.
+    """
+    context_text = fallback_text
+    if chapter_id:
+        try:
+            qdrant_context = await retrieve_context(chapter_id=chapter_id, query=query)
+            if qdrant_context:
+                context_text = qdrant_context
+                logger.info(
+                    f"{log_prefix}using Qdrant context ({len(qdrant_context)} chars) "
+                    f"for chapter {chapter_id}"
+                )
+            else:
+                logger.info(
+                    f"{log_prefix}no Qdrant chunks for chapter {chapter_id}, "
+                    "falling back to inline context_text"
+                )
+        except Exception as exc:
+            logger.warning(
+                f"{log_prefix}Qdrant retrieval failed for chapter {chapter_id}: {exc} "
+                "— falling back to inline context_text"
+            )
+    return context_text
+
+
+def deactivate_by_pdf_id(pdf_id: str) -> None:
+    """
+    Soft-delete: set is_active=False on all vectors for this pdf_id.
+    Vectors remain in Qdrant but are excluded from retrieval.
+    """
+    from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+
+    client = _get_qdrant()
+    client.set_payload(
+        collection_name=COLLECTION_NAME,
+        payload={"is_active": False},
+        points=Filter(must=[FieldCondition(key="pdf_id", match=MatchValue(value=pdf_id))]),
+    )
+    logger.info(f"Deactivated Qdrant vectors for pdf_id={pdf_id}")
+
+
+def reactivate_by_pdf_id(pdf_id: str) -> None:
+    """
+    Restore: set is_active=True on all vectors for this pdf_id.
+    """
+    from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+
+    client = _get_qdrant()
+    client.set_payload(
+        collection_name=COLLECTION_NAME,
+        payload={"is_active": True},
+        points=Filter(must=[FieldCondition(key="pdf_id", match=MatchValue(value=pdf_id))]),
+    )
+    logger.info(f"Reactivated Qdrant vectors for pdf_id={pdf_id}")
+
+
+def hard_delete_by_pdf_id(pdf_id: str) -> None:
+    """
+    Permanent delete: remove all vectors for this pdf_id from Qdrant.
+    Use only for permanent cleanup (e.g. GDPR deletion).
     """
     from qdrant_client.http.models import Filter, FieldCondition, MatchValue, FilterSelector
 
     client = _get_qdrant()
-    result = client.delete(
+    client.delete(
         collection_name=COLLECTION_NAME,
         points_selector=FilterSelector(
             filter=Filter(must=[FieldCondition(key="pdf_id", match=MatchValue(value=pdf_id))])
         ),
     )
-    logger.info(f"Deleted Qdrant vectors for pdf_id={pdf_id}: {result}")
-    return 1  # qdrant delete returns operation_id, not count
+    logger.info(f"Hard-deleted Qdrant vectors for pdf_id={pdf_id}")

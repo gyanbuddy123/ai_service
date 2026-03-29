@@ -58,6 +58,47 @@ Self-verification (do this before calling submit_mcq_batch):
   If any check fails — fix the question before submitting.
 """
 
+_ANSWER_POSITION_RULES = """
+Answer position rules:
+  • Distribute the correct answer across positions A, B, C, D evenly across all questions.
+  • Do NOT place the correct answer in the same position for more than 2 consecutive questions.
+  • Vary the position intentionally — the pattern should not be predictable.
+"""
+
+_QUESTION_TYPE_RULES = """
+Question type rules — choose the BEST type for each question based on the content:
+  mcq_single   : Exactly ONE correct answer. Use for factual, conceptual, and analytical questions.
+                 Provide exactly 4 options. Mark exactly one is_correct=true.
+
+  mcq_multiple : TWO OR MORE correct answers. Use when the content has multiple valid aspects.
+                 Provide exactly 4 options. Mark 2 or more as is_correct=true (can be all 4).
+                 Question text MUST include "Select all that apply."
+
+  rearrange    : Student arranges items in the correct sequence or order.
+                 Use for processes, steps, timelines, or logical sequences.
+                 Provide 4–6 items. ALL options must have is_correct=true.
+                 Each option MUST have correct_order (1-based integer for its position in correct sequence).
+                 Return options in SCRAMBLED order — NOT in the correct sequence.
+                 Question text MUST ask the student to arrange/order the items.
+"""
+
+_IMAGE_RULES = """
+Image/diagram rules (only when generating diagram-based questions):
+  • Provide a matplotlib_code field with Python code using ONLY plt and np (no other imports).
+  • The figure must show the PROBLEM SETUP only — never the answer.
+  • CRITICAL — the image must NOT reveal the answer:
+      - If the question asks "calculate angle X", the image must show the triangle/shape with
+        angle X marked as unknown (e.g. labelled "?") — never show the numerical value of X.
+      - If the question asks "find the missing side", show the side as unknown — never its length.
+      - If the question asks about a process outcome, show only the initial state — never the result.
+  • FORBIDDEN in the code: plt.title(), ax.set_title(), plt.text() or ax.text() that show the
+    answer value, ax.annotate() revealing the answer, plt.figtext(), plt.savefig(), plt.show().
+  • ALLOWED: vertex labels (single letters A, B, C), axis labels with units, shapes, curves,
+    given values that are part of the problem statement (not the answer), "?" label for unknowns.
+  • The code must be complete and runnable with just plt and np available.
+  • Only add a diagram when it genuinely helps the student understand the question setup.
+"""
+
 
 def build_system_prompt(grade_level: int, subject: str = "", chapter: str = "", board: str = "CBSE") -> str:
     if grade_level <= 5:
@@ -94,7 +135,13 @@ Difficulty distribution rules:
   • For any n, choose a distribution that honestly reflects what the topic supports — do not force an even spread if the topic does not warrant it.
   • Avoid clustering all questions at one level unless the topic is genuinely limited in scope.
 
+{_QUESTION_TYPE_RULES}
+
+{_ANSWER_POSITION_RULES}
+
 {_HINT_RULES}
+
+{_IMAGE_RULES}
 
 {_SELF_VERIFICATION}
 
@@ -123,7 +170,7 @@ Chapter content (use ONLY the information below to create questions):
 {context_text}
 ---
 
-Generate exactly {num_questions} MCQ question(s) focused strictly on the topic "{topic}" using only the content provided above. Decide the difficulty distribution based on the topic's nature before generating. Call submit_mcq_batch when ready."""
+Generate exactly {num_questions} MCQ question(s) focused strictly on the topic "{topic}" using only the content provided above. Mix question types (mcq_single, mcq_multiple, rearrange) where appropriate based on the content. Where a diagram genuinely aids a question, include matplotlib_code. Decide the difficulty distribution based on the topic's nature before generating. Call submit_mcq_batch when ready."""
 
 
 SUBMIT_MCQ_BATCH_TOOL = {
@@ -150,7 +197,10 @@ SUBMIT_MCQ_BATCH_TOOL = {
                     "type": "object",
                     "properties": {
                         "question_text": {"type": "string"},
-                        "question_type": {"type": "string", "enum": ["mcq_single", "mcq_multiple"]},
+                        "question_type": {
+                            "type": "string",
+                            "enum": ["mcq_single", "mcq_multiple", "rearrange"],
+                        },
                         "options": {
                             "type": "array",
                             "items": {
@@ -158,24 +208,27 @@ SUBMIT_MCQ_BATCH_TOOL = {
                                 "properties": {
                                     "option_text": {"type": "string"},
                                     "is_correct": {"type": "boolean"},
+                                    "correct_order": {
+                                        "type": "integer",
+                                        "description": "1-based position in correct sequence. Required for rearrange type.",
+                                    },
                                 },
                                 "required": ["option_text", "is_correct"],
                             },
                             "minItems": 4,
-                            "maxItems": 4,
+                            "maxItems": 6,
                         },
                         "hint": {"type": "string"},
                         "explanation": {"type": "string"},
                         "difficulty_level": {"type": "integer", "minimum": 1, "maximum": 5},
-                        "bloom_category": {
+                        "matplotlib_code": {
                             "type": "string",
-                            "enum": ["REMEMBER", "UNDERSTAND", "APPLY", "ANALYZE", "EVALUATE", "CREATE"],
+                            "description": "Optional matplotlib Python code to draw the problem setup diagram. Must NOT reveal the answer value.",
                         },
-                        "topic_tag": {"type": "string"},
                     },
                     "required": [
                         "question_text", "question_type", "options",
-                        "hint", "explanation", "difficulty_level", "bloom_category",
+                        "hint", "explanation", "difficulty_level",
                     ],
                 },
             },

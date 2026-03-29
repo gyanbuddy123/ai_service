@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from schemas.mcq import ModifyRequest, ModifyResponse
 from services.llm_provider import mcq_service
 from services.mcq_validator import validate_questions
+from services.vector_store import resolve_context
 
 router = APIRouter()
 logger = logging.getLogger("ai_service.modify")
@@ -12,6 +13,14 @@ logger = logging.getLogger("ai_service.modify")
 
 @router.post("/ai/modify", response_model=ModifyResponse)
 async def modify_question(req: ModifyRequest):
+    # Resolve context: prefer Qdrant over inline text (same as generate endpoint)
+    context_text = await resolve_context(
+        chapter_id=req.chapter_id,
+        query=req.topic or req.chapter,
+        fallback_text=req.context_text,
+        log_prefix=f"Session {req.session_id}: ",
+    )
+
     try:
         modified = await mcq_service.modify_question(
             question=req.question,
@@ -22,6 +31,7 @@ async def modify_question(req: ModifyRequest):
             chapter=req.chapter,
             topic=req.topic,
             board=req.board,
+            context_text=context_text,
         )
     except Exception as exc:
         logger.error(f"Modify failed for session {req.session_id}: {exc}")

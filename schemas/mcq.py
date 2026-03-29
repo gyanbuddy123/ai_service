@@ -8,7 +8,7 @@ class GenerateRequest(BaseModel):
     subject: str = ""
     chapter: str = ""           # chapter title
     topic: str = ""             # sub-topic within chapter (optional)
-    board: str = "CBSE"         # education board — hardcoded until board logic is implemented
+    board: str = "CBSE"         # education board
     num_questions: int = Field(ge=1, le=50)
     grade_level: int = Field(ge=1, le=12, default=8)
     context_text: str = ""
@@ -18,6 +18,7 @@ class GenerateRequest(BaseModel):
 class MCQOption(BaseModel):
     option_text: str
     is_correct: bool
+    correct_order: int | None = None  # Required for rearrange questions (1-based position)
 
 
 class GeneratedQuestion(BaseModel):
@@ -28,9 +29,10 @@ class GeneratedQuestion(BaseModel):
     difficulty_level: int
     explanation: str = ""
     hint: str = ""
-    topic_tag: str = ""
     exp_points: int = 10
     question_order: int
+    image_base64: str | None = None
+    matplotlib_code: str | None = None
 
 
 class GenerateResponse(BaseModel):
@@ -39,6 +41,9 @@ class GenerateResponse(BaseModel):
     model_used: str
     generation_time_ms: int | None = None
     rejected_count: int = 0
+    total_fix_attempts: int = 0
+    total_retry_rounds: int = 0
+    warning: str | None = None
 
 
 class ModifyRequest(BaseModel):
@@ -50,7 +55,9 @@ class ModifyRequest(BaseModel):
     subject: str = ""
     chapter: str = ""
     topic: str = ""
-    board: str = "CBSE"         # education board — hardcoded until board logic is implemented
+    board: str = "CBSE"
+    chapter_id: str = ""        # for Qdrant context retrieval
+    context_text: str = ""      # fallback if no Qdrant chunks
 
 
 class ModifyResponse(BaseModel):

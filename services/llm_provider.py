@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import time
-import uuid
 from abc import ABC, abstractmethod
 
 from config import settings
@@ -62,6 +61,22 @@ class ClaudeVertexProvider(LLMProvider):
                 return {"questions": block.input.get("questions", []), "model_used": self.model}
 
         raise ValueError("Claude did not return a tool_use block")
+
+    async def modify(self, system: str, user: str) -> str:
+        """Send a modification prompt and return the raw text response."""
+        import asyncio
+
+        def _call():
+            return self._client.messages.create(
+                model=self.model,
+                max_tokens=2048,
+                temperature=0.4,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            )
+
+        response = await asyncio.get_event_loop().run_in_executor(None, _call)
+        return response.content[0].text.strip()
 
 
 class GeminiProvider(LLMProvider):
@@ -118,6 +133,28 @@ class GeminiProvider(LLMProvider):
             raise ValueError(f"Gemini returned invalid JSON (finish_reason={finish_reason}): {e}")
         return {"questions": data.get("questions", []), "model_used": self.model_name}
 
+    async def modify(self, system: str, user: str) -> str:
+        """Send a modification prompt and return the raw text response."""
+        import asyncio
+        import json
+        from vertexai.generative_models import GenerativeModel, GenerationConfig
+
+        combined = f"{system}\n\n{user}\n\nReturn only the modified question as a raw JSON object."
+
+        def _call():
+            model = GenerativeModel(self.model_name)
+            return model.generate_content(
+                combined,
+                generation_config=GenerationConfig(
+                    temperature=0.4,
+                    max_output_tokens=2048,
+                    response_mime_type="application/json",
+                ),
+            )
+
+        response = await asyncio.get_event_loop().run_in_executor(None, _call)
+        return response.text.strip()
+
 
 class MCQGenerationService:
     def __init__(self):
@@ -157,11 +194,21 @@ class MCQGenerationService:
         result["generation_time_ms"] = int((time.monotonic() - start) * 1000)
         return result
 
-    async def modify_question(self, question: dict, modification_type: str, instruction: str,
-                              grade_level: int = 8, subject: str = "", chapter: str = "",
-                              topic: str = "", board: str = "CBSE") -> dict:
+    async def modify_question(
+        self,
+        question: dict,
+        modification_type: str,
+        instruction: str,
+        grade_level: int = 8,
+        subject: str = "",
+        chapter: str = "",
+        topic: str = "",
+        board: str = "CBSE",
+        context_text: str = "",
+    ) -> dict:
         """
-        Send a single question + instruction to Claude for modification.
+        Send a single question + instruction to Claude (Gemini fallback) for modification.
+        context_text provides the chapter content so the LLM can verify correctness.
         Returns the modified question dict.
         """
         import json
@@ -185,6 +232,12 @@ class MCQGenerationService:
             ctx_parts.append(f"Topic: {topic}")
         curriculum_context = " | ".join(ctx_parts)
 
+        context_section = ""
+        if context_text:
+            context_section = (
+                f"\n\nChapter content (use this to verify correctness):\n---\n{context_text}\n---"
+            )
+
         system = (
             "You are an expert educational assessment designer. "
             f"Curriculum context: {curriculum_context}. "
@@ -194,46 +247,37 @@ class MCQGenerationService:
         )
         user = (
             f"Modification instruction: {task}\n\n"
-            f"Original question:\n{json.dumps(question, indent=2)}\n\n"
+            f"Original question:\n{json.dumps(question, indent=2)}"
+            f"{context_section}\n\n"
             "Return the modified question JSON."
         )
 
+        text = None
         try:
-            import asyncio
-            from anthropic import AnthropicVertex
+            text = await self._get_primary().modify(system, user)
+            logger.info("Claude modify succeeded")
+        except Exception as exc:
+            logger.warning(f"Claude modify failed ({exc}), falling back to Gemini")
+            try:
+                text = await self._get_fallback().modify(system, user)
+                logger.info("Gemini modify fallback succeeded")
+            except Exception as exc2:
+                logger.error(f"Gemini modify also failed: {exc2}")
+                raise
 
-            client = AnthropicVertex(
-                region=settings.google_cloud_location_claude,
-                project_id=settings.google_cloud_project,
-            )
-
-            def _call():
-                return client.messages.create(
-                    model=settings.claude_model,
-                    max_tokens=2048,
-                    temperature=0.4,
-                    system=system,
-                    messages=[{"role": "user", "content": user}],
-                )
-
-            response = await asyncio.get_event_loop().run_in_executor(None, _call)
-            text = response.content[0].text.strip()
-
-            # Strip code fences if present
-            if text.startswith("```"):
-                text = text.split("```")[1]
+        # Strip code fences if present (e.g. ```json\n{...}\n```)
+        if text.startswith("```"):
+            parts = text.split("```")
+            if len(parts) >= 2:
+                text = parts[1]
                 if text.startswith("json"):
                     text = text[4:]
 
-            modified = json.loads(text)
-            # Preserve original id if present
-            if "id" in question and "id" not in modified:
-                modified["id"] = question["id"]
-            return modified
-
-        except Exception as exc:
-            logger.error(f"modify_question failed: {exc}")
-            raise
+        modified = json.loads(text.strip())
+        # Preserve original id if present
+        if "id" in question and "id" not in modified:
+            modified["id"] = question["id"]
+        return modified
 
 
 # Singleton used by routers

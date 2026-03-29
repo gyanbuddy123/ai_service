@@ -10,16 +10,22 @@ class Settings(BaseSettings):
     # LLM models
     claude_model: str = "claude-sonnet-4-6"
     gemini_model: str = "gemini-2.0-flash"
+    embedding_model: str = "text-multilingual-embedding-002"  # handles Hindi/English code-switching in CBSE content
 
     # Qdrant
     qdrant_host: str = "localhost"
     qdrant_port: int = 6333
     qdrant_collection: str = "pdf_chunks"
+    qdrant_api_key: str = ""  # leave empty for unauthenticated (local dev)
 
-    # Django callback (used by async flows if needed)
-    django_callback_url: str = "http://localhost:8000/api/internal/ai-callback"
+    # Chunking
+    chunk_size_chars: int = 2400   # ~600 tokens; multilingual embedding model supports 2048 tokens
+    chunk_overlap_chars: int = 200  # seed next chunk with last N chars to avoid boundary gaps
 
-    class Config:
+    # Retrieval
+    retrieve_top_k: int = 8  # final number of chunks returned from hybrid search
+
+class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
         extra = "ignore"
