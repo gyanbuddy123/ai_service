@@ -1,5 +1,5 @@
 """
-Build system and user prompts for MCQ generation.
+Build system and user prompts for MCQ generation and modification.
 """
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ Hint quality rules (ALL must be satisfied — no exceptions):
 """
 
 _SELF_VERIFICATION = """
-Self-verification (do this before calling submit_mcq_batch):
+Self-verification (do this before submitting):
   For each question, verify:
   ✓ Every claim is supported by the provided chapter text
   ✓ Hint passes all hint rules above (no answer tokens)
@@ -82,22 +82,86 @@ Question type rules — choose the BEST type for each question based on the cont
                  Question text MUST ask the student to arrange/order the items.
 """
 
-_IMAGE_RULES = """
-Image/diagram rules (only when generating diagram-based questions):
-  • Provide a matplotlib_code field with Python code using ONLY plt and np (no other imports).
-  • The figure must show the PROBLEM SETUP only — never the answer.
-  • CRITICAL — the image must NOT reveal the answer:
-      - If the question asks "calculate angle X", the image must show the triangle/shape with
-        angle X marked as unknown (e.g. labelled "?") — never show the numerical value of X.
-      - If the question asks "find the missing side", show the side as unknown — never its length.
-      - If the question asks about a process outcome, show only the initial state — never the result.
-  • FORBIDDEN in the code: plt.title(), ax.set_title(), plt.text() or ax.text() that show the
-    answer value, ax.annotate() revealing the answer, plt.figtext(), plt.savefig(), plt.show().
-  • ALLOWED: vertex labels (single letters A, B, C), axis labels with units, shapes, curves,
-    given values that are part of the problem statement (not the answer), "?" label for unknowns.
-  • The code must be complete and runnable with just plt and np available.
-  • Only add a diagram when it genuinely helps the student understand the question setup.
+_DIFFICULTY_DISTRIBUTION_RULES = """
+Difficulty distribution rules:
+  • Assess the topic's breadth and cognitive depth before deciding the distribution.
+  • A narrow, factual topic (e.g. definitions, dates) should lean toward levels 1–2.
+  • A conceptual or applied topic should lean toward levels 3–4.
+  • A complex, evaluative topic (e.g. analysis, design) should include levels 4–5.
+  • For any n, choose a distribution that honestly reflects what the topic supports — do not force an even spread if the topic does not warrant it.
+  • Avoid clustering all questions at one level unless the topic is genuinely limited in scope.
 """
+
+_IMAGE_RULES = """
+Image/diagram rules (only when a visual genuinely helps the student understand the question):
+  • Set the image_prompt field to a clear 2–3 sentence description of what to show.
+  • Works for ANY subject — geometry, physics, biology, chemistry, history maps, etc.
+  • The image must show the PROBLEM SETUP only — NEVER the answer.
+  • CRITICAL — the description must NOT imply or include the answer:
+      - If the question asks "what is angle X?", describe the shape with angle X marked as "?".
+      - If the question asks about a process outcome, describe only the initial state.
+      - If the question asks to identify a structure, show the structure with the target part unlabelled.
+  • Include all relevant labels, measurements, and given values that are part of the problem.
+  • Example: "A bar magnet with S on the left and N on the right. Magnetic field lines curve from
+    N to S outside the magnet. The direction of field lines inside the magnet is marked with '?'."
+  • Only add an image when it genuinely aids comprehension — do not add one for purely text-based questions.
+"""
+
+
+# ── Shared per-question JSON schema — single source of truth for generate + modify ──────────────
+
+QUESTION_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "question_text": {"type": "string"},
+        "question_type": {
+            "type": "string",
+            "enum": ["mcq_single", "mcq_multiple", "rearrange"],
+        },
+        "options": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "option_text": {"type": "string"},
+                    "is_correct": {"type": "boolean"},
+                    "correct_order": {
+                        "type": "integer",
+                        "description": "1-based position in correct sequence. Required for rearrange type.",
+                    },
+                },
+                "required": ["option_text", "is_correct"],
+            },
+            "minItems": 4,
+            "maxItems": 6,
+        },
+        "hint": {"type": "string"},
+        "explanation": {"type": "string"},
+        "difficulty_level": {"type": "integer", "minimum": 1, "maximum": 5},
+        "image_prompt": {
+            "type": "string",
+            "description": (
+                "Optional. A concise 2-3 sentence description of a diagram to show with this question. "
+                "Describe ONLY the problem setup — never include or imply the answer. "
+                "Works for any subject (geometry, biology, chemistry, physics, etc.)."
+            ),
+        },
+    },
+    "required": [
+        "question_text", "question_type", "options",
+        "hint", "explanation", "difficulty_level",
+    ],
+}
+
+# Task descriptions for each predefined modification type.
+# CUSTOM is intentionally absent — it uses the user's instruction directly.
+MODIFY_TYPE_TASKS = {
+    "REPHRASE": "Rephrase the question text and options using different wording. Keep the same correct answer.",
+    "INCREASE_DIFFICULTY": "Increase the difficulty level by one step. Deepen the cognitive demand (e.g. from recall to application). Update difficulty_level accordingly.",
+    "DECREASE_DIFFICULTY": "Decrease the difficulty level by one step. Simplify the cognitive demand. Update difficulty_level accordingly.",
+    "CHANGE_OPTIONS": "Rewrite the distractor options to make them more plausible and challenging, without changing the correct answer.",
+    "REGENERATE": "Generate a completely new question on the same topic and difficulty level.",
+}
 
 
 def build_system_prompt(grade_level: int, subject: str = "", chapter: str = "", board: str = "CBSE") -> str:
@@ -119,21 +183,16 @@ def build_system_prompt(grade_level: int, subject: str = "", chapter: str = "", 
 
     return f"""You are an expert educational assessment designer specializing in Bloom's Taxonomy and Item Response Theory (IRT).
 
-Your task: generate high-quality multiple-choice questions (MCQs) from the provided chapter content.
+You create and refine high-quality multiple-choice questions (MCQs) for educational content.
 
 Curriculum context: {context_line}
 Grade calibration: {grade_note}
 
 {_MOBILE_FORMAT_RULES}
+
 {_BLOOM_MAPPING}
 
-Difficulty distribution rules:
-  • Assess the topic's breadth and cognitive depth before deciding the distribution.
-  • A narrow, factual topic (e.g. definitions, dates) should lean toward levels 1–2.
-  • A conceptual or applied topic should lean toward levels 3–4.
-  • A complex, evaluative topic (e.g. analysis, design) should include levels 4–5.
-  • For any n, choose a distribution that honestly reflects what the topic supports — do not force an even spread if the topic does not warrant it.
-  • Avoid clustering all questions at one level unless the topic is genuinely limited in scope.
+{_DIFFICULTY_DISTRIBUTION_RULES}
 
 {_QUESTION_TYPE_RULES}
 
@@ -145,7 +204,7 @@ Difficulty distribution rules:
 
 {_SELF_VERIFICATION}
 
-Output format: call the submit_mcq_batch tool with your questions. Do not output raw text."""
+Output format: return your response as structured JSON matching the provided schema. No markdown, no code fences, no plain text."""
 
 
 def build_user_prompt(
@@ -170,69 +229,59 @@ Chapter content (use ONLY the information below to create questions):
 {context_text}
 ---
 
-Generate exactly {num_questions} MCQ question(s) focused strictly on the topic "{topic}" using only the content provided above. Mix question types (mcq_single, mcq_multiple, rearrange) where appropriate based on the content. Where a diagram genuinely aids a question, include matplotlib_code. Decide the difficulty distribution based on the topic's nature before generating. Call submit_mcq_batch when ready."""
+Generate exactly {num_questions} MCQ question(s) focused strictly on the topic "{topic}" using only the content provided above. Mix question types (mcq_single, mcq_multiple, rearrange) where appropriate. Where a diagram genuinely aids a question, set image_prompt to a clear description of what to show. Decide the difficulty distribution based on the topic's nature before generating. Return all questions as a JSON array."""
 
 
-SUBMIT_MCQ_BATCH_TOOL = {
-    "name": "submit_mcq_batch",
-    "description": "Submit the final validated batch of MCQ questions.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "metadata": {
-                "type": "object",
-                "properties": {
-                    "topic": {"type": "string"},
-                    "total_generated": {"type": "integer"},
-                    "bloom_distribution": {
-                        "type": "object",
-                        "description": "Count per Bloom category, e.g. {REMEMBER: 2, UNDERSTAND: 3}",
-                    },
-                },
-                "required": ["topic", "total_generated"],
-            },
-            "questions": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "question_text": {"type": "string"},
-                        "question_type": {
-                            "type": "string",
-                            "enum": ["mcq_single", "mcq_multiple", "rearrange"],
-                        },
-                        "options": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "option_text": {"type": "string"},
-                                    "is_correct": {"type": "boolean"},
-                                    "correct_order": {
-                                        "type": "integer",
-                                        "description": "1-based position in correct sequence. Required for rearrange type.",
-                                    },
-                                },
-                                "required": ["option_text", "is_correct"],
-                            },
-                            "minItems": 4,
-                            "maxItems": 6,
-                        },
-                        "hint": {"type": "string"},
-                        "explanation": {"type": "string"},
-                        "difficulty_level": {"type": "integer", "minimum": 1, "maximum": 5},
-                        "matplotlib_code": {
-                            "type": "string",
-                            "description": "Optional matplotlib Python code to draw the problem setup diagram. Must NOT reveal the answer value.",
-                        },
-                    },
-                    "required": [
-                        "question_text", "question_type", "options",
-                        "hint", "explanation", "difficulty_level",
-                    ],
-                },
-            },
-        },
-        "required": ["metadata", "questions"],
-    },
-}
+def build_batch_fix_prompt(items: list[dict]) -> str:
+    """
+    Build a prompt to fix all rejected questions in a single LLM call.
+
+    items: list of {index, fix_instruction, question}
+    """
+    import json
+    return (
+        "You will receive a list of MCQ questions that each have a specific issue. "
+        "Fix each question according to its individual fix_instruction. "
+        "Apply ONLY the specified fix — do not change anything else. "
+        "Return a JSON object with a 'questions' array containing the fixed questions "
+        "in the same order as the input (same length).\n\n"
+        f"Questions to fix:\n{json.dumps(items, indent=2)}"
+    )
+
+
+# Modify prompts only need enough context to verify one question's correctness —
+# not the entire chapter. Keep this small to avoid Gemini JSON truncation with
+# guided generation (response_schema + large input causes incomplete output).
+_MODIFY_CONTEXT_LIMIT = 3000
+
+
+def build_modify_user_prompt(
+    question: dict,
+    modification_type: str,
+    instruction: str,
+    context_text: str = "",
+) -> str:
+    import json
+
+    # CUSTOM: use the user's instruction directly.
+    # All predefined types: use the task description from MODIFY_TYPE_TASKS.
+    if modification_type == "CUSTOM":
+        task = instruction or "Improve the question quality."
+    else:
+        task = MODIFY_TYPE_TASKS.get(modification_type, modification_type)
+
+    context_section = ""
+    if context_text:
+        truncated = context_text[:_MODIFY_CONTEXT_LIMIT]
+        if len(context_text) > _MODIFY_CONTEXT_LIMIT:
+            truncated += "\n[...content truncated for brevity...]"
+        context_section = (
+            f"\n\nChapter content (verify correctness against this):\n---\n{truncated}\n---"
+        )
+
+    return (
+        f"Modification task: {task}\n\n"
+        f"Original question:\n{json.dumps(question, indent=2)}"
+        f"{context_section}\n\n"
+        "Apply the modification and return the updated question as a JSON object."
+    )

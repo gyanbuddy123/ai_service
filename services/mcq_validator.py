@@ -12,12 +12,6 @@ _STOP_WORDS = {
     'but', 'if', 'then', 'so', 'not', 'no', 'nor',
 }
 
-# Rejection reasons that can be repaired via modify_question
-_FIXABLE_REASONS = {
-    "Hint reveals the correct answer",
-    "No correct answer marked",
-    "difficulty_level must be 1–5",
-}
 
 
 def normalize_text(text: str) -> str:
@@ -67,35 +61,49 @@ def hint_leaks_answer(hint: str, correct_option_texts: list[str]) -> bool:
     return False
 
 
-def is_fixable(rejection_reason: str) -> bool:
-    """Return True if the rejection can be repaired via modify_question."""
-    return rejection_reason in _FIXABLE_REASONS
+def build_fix_instruction(reason: str, q: dict) -> str:
+    """Return a specific, targeted fix instruction for any rejection reason."""
+    options = q.get("options") or []
+    n = len(options)
 
-
-def fix_instruction(rejection_reason: str) -> tuple[str, str]:
-    """
-    Return (modification_type, instruction) for a fixable rejection reason.
-    """
-    if rejection_reason == "Hint reveals the correct answer":
+    if reason == "Hint reveals the correct answer":
         return (
-            "CUSTOM",
             "Rewrite only the hint field so it does not contain any word from the correct answer. "
             "Guide the student's thinking without naming or implying the correct option. "
-            "Keep everything else identical.",
+            "Keep everything else identical."
         )
-    if rejection_reason == "No correct answer marked":
+    if reason == "No correct answer marked":
+        return "Mark exactly one option as is_correct=true. Do not change any option text."
+    if reason in ("difficulty_level must be 1–5", "difficulty_level must be an integer"):
+        return "Set difficulty_level to 3. Keep everything else identical."
+    if reason == "MCQ questions must have exactly 4 options":
+        if n < 4:
+            return (
+                f"This question has {n} option(s). Add {4 - n} more distinct, plausible distractor "
+                f"option(s) with is_correct=false to bring the total to exactly 4."
+            )
+        return "Remove extra options so the question has exactly 4 options total. Keep the correct answer."
+    if reason == "options must be a list with at least 2 items":
+        return "Add 3 more distinct, plausible distractor options with is_correct=false so the total is 4."
+    if reason == "Each option must have option_text":
+        return "Add a non-empty option_text string to every option that is missing it."
+    if reason == "Each option must have is_correct":
+        return "Add is_correct (true or false) to every option that is missing it."
+    if reason == "mcq_single must have exactly one correct answer":
+        return "Set is_correct=true on exactly one option and is_correct=false on all others."
+    if "rearrange" in reason.lower() or "correct_order" in reason.lower():
         return (
-            "CUSTOM",
-            "Exactly one option must have is_correct=true. "
-            "Fix the is_correct flags without changing any option text.",
+            "Fix the rearrange question: all options must have is_correct=true and a unique "
+            "correct_order integer (1-based, contiguous from 1 to N)."
         )
-    if rejection_reason == "difficulty_level must be 1–5":
+    if reason == "Missing required field: question_text":
+        return "Add a clear, complete question_text string relevant to the options and topic."
+    if reason == "Duplicate question (hash match)":
         return (
-            "CHANGE_DIFFICULTY",
-            "Set difficulty_level to 3.",
+            "Rephrase the question_text and all options using completely different wording "
+            "while keeping the same topic, difficulty, and correct answer."
         )
-    # Fallback (should not be reached for non-fixable reasons)
-    return ("CUSTOM", "Fix the issue with this question.")
+    return f"Fix the following issue with this question: {reason}"
 
 
 def validate_single(q: dict, seen_hashes: set[str]) -> str | None:

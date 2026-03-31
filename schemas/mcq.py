@@ -9,7 +9,7 @@ class GenerateRequest(BaseModel):
     chapter: str = ""           # chapter title
     topic: str = ""             # sub-topic within chapter (optional)
     board: str = "CBSE"         # education board
-    num_questions: int = Field(ge=1, le=50)
+    num_questions: int = Field(ge=1, le=15)
     grade_level: int = Field(ge=1, le=12, default=8)
     context_text: str = ""
     existing_question_stems: list[str] = []
@@ -32,17 +32,14 @@ class GeneratedQuestion(BaseModel):
     exp_points: int = 10
     question_order: int
     image_base64: str | None = None
-    matplotlib_code: str | None = None
+    image_prompt: str | None = None
 
 
 class GenerateResponse(BaseModel):
     session_id: str
     questions: list[GeneratedQuestion]
-    model_used: str
     generation_time_ms: int | None = None
     rejected_count: int = 0
-    total_fix_attempts: int = 0
-    total_retry_rounds: int = 0
     warning: str | None = None
 
 
