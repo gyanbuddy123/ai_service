@@ -44,10 +44,12 @@ async def generate_assessment(req: GenerateRequest):
     )
 
     # ── 2. Single generation call ────────────────────────────────────────────
+    # Buffer scales with requested count: +1 for ≤5, +2 for ≤10, +3 for ≤15, etc.
+    _buffer = (req.num_questions - 1) // 5 + 1
     user_prompt = build_user_prompt(
         chapter=req.chapter,
         topic=req.topic,
-        num_questions=req.num_questions + 2,  # over-generate to absorb expected rejections
+        num_questions=req.num_questions + _buffer,  # over-generate to absorb expected rejections
         context_text=context_text,
         existing_question_stems=req.existing_question_stems or None,
     )
@@ -106,11 +108,16 @@ async def generate_assessment(req: GenerateRequest):
     # ── 4. Shuffle answer positions ──────────────────────────────────────────
     valid = shuffle_answer_positions(valid)
 
-    # ── 6. Finalize questions (exp_points sync + Imagen diagram generation) ──
-    # Run concurrently — Imagen calls per question are independent I/O
+    # ── 6. Finalize questions (exp_points sync + Gemini image generation) ──
+    # Run concurrently — image calls per question are independent I/O
     from services.question_utils import finalize_question
     await asyncio.gather(
-        *[finalize_question(q, log_prefix=f"Session {req.session_id}: ") for q in valid]
+        *[finalize_question(
+            q,
+            log_prefix=f"Session {req.session_id}: ",
+            subject=req.subject,
+            grade_level=req.grade_level,
+        ) for q in valid]
     )
 
     # ── 7. Build response ────────────────────────────────────────────────────

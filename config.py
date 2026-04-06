@@ -8,6 +8,9 @@ class Settings(BaseSettings):
 
     # LLM models
     gemini_model: str = "gemini-2.5-flash"
+    image_model_api: str = "gemini"
+    image_model: str = "gemini-3.1-flash-image-preview"
+    image_model_location: str = "global"  # global endpoint works for all regions
     embedding_model: str = "text-multilingual-embedding-002"  # handles Hindi/English code-switching in CBSE content
 
     # Qdrant

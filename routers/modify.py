@@ -61,8 +61,13 @@ async def modify_question(req: ModifyRequest):
         for opt in modified.get("options", []):
             opt["correct_order"] = None
 
-    # Sync exp_points with difficulty + execute any diagram code
-    await finalize_question(modified, log_prefix=f"Session {req.session_id}: ")
+    # Sync exp_points with difficulty + generate diagram via Gemini image
+    await finalize_question(
+        modified,
+        log_prefix=f"Session {req.session_id}: ",
+        subject=req.subject,
+        grade_level=req.grade_level,
+    )
 
     # Validate — log warning but never block the teacher's explicit change
     valid, rejected = validate_questions([modified])
