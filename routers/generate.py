@@ -6,7 +6,10 @@ from fastapi import APIRouter, HTTPException
 
 from schemas.mcq import GenerateRequest, GenerateResponse, GeneratedQuestion
 from services.llm_provider import mcq_service
-from services.prompt_builder import build_system_prompt, build_user_prompt, build_batch_fix_prompt
+from services.prompt_builder import (
+    build_system_prompt, build_user_prompt, build_batch_fix_prompt,
+    build_prereq_system_prompt, build_prereq_user_prompt,
+)
 from services.mcq_validator import (
     validate_questions, validate_single, question_hash, build_fix_instruction,
 )
@@ -16,43 +19,63 @@ from services.answer_shuffler import shuffle_answer_positions
 router = APIRouter()
 logger = logging.getLogger("ai_service.generate")
 
+PREREQUISITE_TOPIC = "Prerequisite Knowledge Check"
+
 
 @router.post("/ai/generate", response_model=GenerateResponse)
 async def generate_assessment(req: GenerateRequest):
-    # ── 1. Resolve context ───────────────────────────────────────────────────
-    context_text = await resolve_context(
-        chapter_id=req.chapter_id,
-        query=req.topic or req.chapter,
-        fallback_text=req.context_text,
-        log_prefix=f"Session {req.session_id}: ",
-    )
+    # ── 1. Resolve context + build prompts ──────────────────────────────────
+    _buffer = (req.num_questions - 1) // 5 + 1  # over-generate buffer
+    is_prereq = req.topic.strip().lower() == PREREQUISITE_TOPIC.lower()
 
-    if not context_text:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "No context available for generation. "
-                "Upload a PDF for this chapter or provide context_text."
-            ),
+    if is_prereq:
+        # Prerequisite Knowledge Check — skip Qdrant, use AI's own curriculum knowledge
+        logger.info(f"Session {req.session_id}: prerequisite knowledge check mode (grade {req.grade_level} → {max(1, req.grade_level - 1)})")
+        system_prompt = build_prereq_system_prompt(
+            grade_level=req.grade_level,
+            subject=req.subject,
+            chapter=req.chapter,
+            board=req.board,
+        )
+        user_prompt = build_prereq_user_prompt(
+            chapter=req.chapter,
+            num_questions=req.num_questions + _buffer,
+            board=req.board,
+            grade_level=req.grade_level,
+            existing_question_stems=req.existing_question_stems or None,
+        )
+    else:
+        context_text = await resolve_context(
+            chapter_id=req.chapter_id,
+            query=req.topic or req.chapter,
+            fallback_text=req.context_text,
+            log_prefix=f"Session {req.session_id}: ",
         )
 
-    system_prompt = build_system_prompt(
-        grade_level=req.grade_level,
-        subject=req.subject,
-        chapter=req.chapter,
-        board=req.board,
-    )
+        if not context_text:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "No context available for generation. "
+                    "Upload a PDF for this chapter or provide context_text."
+                ),
+            )
+
+        system_prompt = build_system_prompt(
+            grade_level=req.grade_level,
+            subject=req.subject,
+            chapter=req.chapter,
+            board=req.board,
+        )
+        user_prompt = build_user_prompt(
+            chapter=req.chapter,
+            topic=req.topic,
+            num_questions=req.num_questions + _buffer,
+            context_text=context_text,
+            existing_question_stems=req.existing_question_stems or None,
+        )
 
     # ── 2. Single generation call ────────────────────────────────────────────
-    # Buffer scales with requested count: +1 for ≤5, +2 for ≤10, +3 for ≤15, etc.
-    _buffer = (req.num_questions - 1) // 5 + 1
-    user_prompt = build_user_prompt(
-        chapter=req.chapter,
-        topic=req.topic,
-        num_questions=req.num_questions + _buffer,  # over-generate to absorb expected rejections
-        context_text=context_text,
-        existing_question_stems=req.existing_question_stems or None,
-    )
     try:
         raw = await mcq_service.generate(
             system_prompt=system_prompt,

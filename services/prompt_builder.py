@@ -232,6 +232,80 @@ Chapter content (use ONLY the information below to create questions):
 Generate exactly {num_questions} MCQ question(s) focused strictly on the topic "{topic}" using only the content provided above. Mix question types (mcq_single, mcq_multiple, rearrange) where appropriate. Where a diagram genuinely aids a question, set image_prompt to a clear description of what to show. Decide the difficulty distribution based on the topic's nature before generating. Return all questions as a JSON array."""
 
 
+def build_prereq_system_prompt(grade_level: int, subject: str = "", chapter: str = "", board: str = "CBSE") -> str:
+    prereq_grade = max(1, grade_level - 1)
+
+    if prereq_grade <= 5:
+        grade_note = "Use concrete, simple language. Short sentences. No jargon."
+    elif prereq_grade <= 8:
+        grade_note = "Use moderate academic language. Some subject-specific vocabulary is fine."
+    elif prereq_grade <= 10:
+        grade_note = "Use academic language appropriate for secondary school students."
+    else:
+        grade_note = "Use college-preparatory academic language with full subject terminology."
+
+    parts = [f"Board: {board}", f"Current Grade: {grade_level}", f"Prerequisite Grade: {prereq_grade}"]
+    if subject:
+        parts.append(f"Subject: {subject}")
+    if chapter:
+        parts.append(f"Chapter: {chapter}")
+    context_line = " | ".join(parts)
+
+    return f"""You are an expert educational assessment designer specialising in prerequisite and foundational knowledge assessment.
+
+Your task is to generate MCQs that check whether a Class {grade_level} student has the foundational knowledge from Class {prereq_grade} needed to successfully study this chapter.
+
+Curriculum context: {context_line}
+Grade calibration (target prerequisite level — Class {prereq_grade}): {grade_note}
+
+You do NOT have a textbook excerpt for this task. Use your knowledge of the {board} curriculum to identify:
+  • Concepts and skills taught at Class {prereq_grade} level for this chapter's topic
+  • Foundational understanding a student must have before advancing to Class {grade_level} content
+  • Common prerequisite gaps that cause students to struggle with this chapter
+
+Questions must be pitched at Class {prereq_grade} difficulty — not the current Class {grade_level} level.
+
+{_MOBILE_FORMAT_RULES}
+
+{_BLOOM_MAPPING}
+
+{_DIFFICULTY_DISTRIBUTION_RULES}
+
+{_QUESTION_TYPE_RULES}
+
+{_ANSWER_POSITION_RULES}
+
+{_HINT_RULES}
+
+{_IMAGE_RULES}
+
+{_SELF_VERIFICATION}
+
+Output format: return your response as structured JSON matching the provided schema. No markdown, no code fences, no plain text."""
+
+
+def build_prereq_user_prompt(
+    chapter: str,
+    num_questions: int,
+    board: str = "CBSE",
+    grade_level: int = 8,
+    existing_question_stems: list[str] | None = None,
+) -> str:
+    prereq_grade = max(1, grade_level - 1)
+
+    dedup_section = ""
+    if existing_question_stems:
+        stems_list = "\n".join(f"  - {s}" for s in existing_question_stems)
+        dedup_section = f"\nAlready-asked questions (do NOT repeat these topics):\n{stems_list}\n"
+
+    return f"""Chapter: {chapter}
+Topic: Prerequisite Knowledge Check
+Current Grade: {grade_level} | Prerequisite grade to assess: {prereq_grade}
+Number of questions to generate: {num_questions}
+{dedup_section}
+Generate exactly {num_questions} MCQ question(s) that test the foundational knowledge a Class {grade_level} student should already have from Class {prereq_grade} before studying "{chapter}". Use your knowledge of the {board} curriculum to determine what prerequisite concepts are expected at Class {prereq_grade} level. Questions must be pitched at Class {prereq_grade} difficulty — not the current Class {grade_level} level. Mix question types (mcq_single, mcq_multiple, rearrange) where appropriate. Where a diagram genuinely aids a question, set image_prompt to a clear description of what to show. Return all questions as a JSON array."""
+
+
 def build_batch_fix_prompt(items: list[dict]) -> str:
     """
     Build a prompt to fix all rejected questions in a single LLM call.
