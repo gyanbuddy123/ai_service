@@ -19,7 +19,7 @@ from services.answer_shuffler import shuffle_answer_positions
 router = APIRouter()
 logger = logging.getLogger("ai_service.generate")
 
-PREREQUISITE_TOPIC = "Prerequisite Knowledge Check"
+PREREQUISITE_TOPIC = "Previous Knowledge Testing"
 
 
 @router.post("/ai/generate", response_model=GenerateResponse)
@@ -29,8 +29,8 @@ async def generate_assessment(req: GenerateRequest):
     is_prereq = req.topic.strip().lower() == PREREQUISITE_TOPIC.lower()
 
     if is_prereq:
-        # Prerequisite Knowledge Check — skip Qdrant, use AI's own curriculum knowledge
-        logger.info(f"Session {req.session_id}: prerequisite knowledge check mode (grade {req.grade_level} → {max(1, req.grade_level - 1)})")
+        # Previous Knowledge Testing — skip Qdrant, use AI's own curriculum knowledge
+        logger.info(f"Session {req.session_id}: previous knowledge testing mode (grade {req.grade_level} → {max(1, req.grade_level - 1)})")
         system_prompt = build_prereq_system_prompt(
             grade_level=req.grade_level,
             subject=req.subject,
