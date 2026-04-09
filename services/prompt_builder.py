@@ -84,6 +84,17 @@ Answer position rules:
   • Vary the position intentionally — the pattern should not be predictable.
 """
 
+_COMPETENCY_DIFFICULTY_RULES = """
+Difficulty rules for Competency Assessment (STRICT — no exceptions):
+  • Generate ONLY difficulty levels 4 and 5. Levels 1, 2, and 3 are FORBIDDEN.
+  • Level 4 — ANALYZE: break down, compare, contrast relationships within the chapter.
+    Stems: "What is the relationship between...", "Compare...", "Why is X different from Y..."
+  • Level 5 — EVALUATE / CREATE: judge, design, propose, justify using chapter knowledge.
+    Stems: "Which solution is most appropriate...", "Justify...", "What would you recommend...", "Design..."
+  • Every question must require the student to go beyond recall — analysis or evaluation only.
+  • Do NOT generate any question that can be answered by simple recall or recognition.
+"""
+
 _QUESTION_TYPE_RULES = """
 Question type rules — choose the BEST type for each question based on the content:
   mcq_single   : Exactly ONE correct answer. Use for factual, conceptual, and analytical questions.
@@ -327,6 +338,74 @@ Current Grade: {grade_level} | Prerequisite grade to assess: {prereq_grade}
 Number of questions to generate: {num_questions}
 {dedup_section}
 Generate exactly {num_questions} MCQ question(s) that test the foundational knowledge a Class {grade_level} student should already have from Class {prereq_grade} before studying "{chapter}". Use your knowledge of the {board} curriculum to determine what prerequisite concepts are expected at Class {prereq_grade} level. Questions must be pitched at Class {prereq_grade} difficulty — not the current Class {grade_level} level. Mix question types (mcq_single, mcq_multiple, rearrange) where appropriate. Where a diagram genuinely aids a question, set image_prompt to a clear description of what to show. Return all questions as a JSON array."""
+
+
+def build_competency_system_prompt(grade_level: int, subject: str = "", chapter: str = "", board: str = "CBSE") -> str:
+    if grade_level <= 5:
+        grade_note = "Use concrete, simple language. Short sentences. No jargon."
+    elif grade_level <= 8:
+        grade_note = "Use moderate academic language. Some subject-specific vocabulary is fine."
+    elif grade_level <= 10:
+        grade_note = "Use academic language appropriate for secondary school students."
+    else:
+        grade_note = "Use college-preparatory academic language with full subject terminology."
+
+    parts = [f"Board: {board}", f"Grade: {grade_level}"]
+    if subject:
+        parts.append(f"Subject: {subject}")
+    if chapter:
+        parts.append(f"Chapter: {chapter}")
+    context_line = " | ".join(parts)
+
+    return f"""You are an expert educational assessment designer specialising in higher-order thinking and competency-based assessment.
+
+Your task is to generate advanced MCQs that assess a student's deep understanding and analytical ability across the ENTIRE chapter — not recall of specific facts.
+
+Curriculum context: {context_line}
+Grade calibration: {grade_note}
+
+{_MOBILE_FORMAT_RULES}
+
+{_BLOOM_MAPPING}
+
+{_COMPETENCY_DIFFICULTY_RULES}
+
+{_QUESTION_TYPE_RULES}
+
+{_ANSWER_POSITION_RULES}
+
+{_HINT_RULES}
+
+{_EXPLANATION_RULES}
+
+{_IMAGE_RULES}
+
+{_SELF_VERIFICATION}
+
+Output format: return your response as structured JSON matching the provided schema. No markdown, no code fences, no plain text."""
+
+
+def build_competency_user_prompt(
+    chapter: str,
+    num_questions: int,
+    context_text: str,
+    existing_question_stems: list[str] | None = None,
+) -> str:
+    dedup_section = ""
+    if existing_question_stems:
+        stems_list = "\n".join(f"  - {s}" for s in existing_question_stems)
+        dedup_section = f"\nAlready-asked questions (do NOT repeat these topics):\n{stems_list}\n"
+
+    return f"""Chapter: {chapter}
+Assessment Type: Competency Assessment (whole chapter, levels 4–5 only)
+Number of questions to generate: {num_questions}
+{dedup_section}
+Chapter content (use ONLY the information below to create questions):
+---
+{context_text}
+---
+
+Generate exactly {num_questions} higher-order MCQ question(s) covering the FULL breadth of this chapter. Every question must be difficulty level 4 (Analyze) or 5 (Evaluate/Create) — do NOT generate any level 1, 2, or 3 questions. Questions must require the student to analyse relationships, evaluate arguments, or apply concepts in novel ways — not recall facts. Mix question types (mcq_single, mcq_multiple, rearrange) where appropriate. Return all questions as a JSON array."""
 
 
 def build_batch_fix_prompt(items: list[dict]) -> str:

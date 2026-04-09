@@ -9,17 +9,19 @@ from services.llm_provider import mcq_service
 from services.prompt_builder import (
     build_system_prompt, build_user_prompt, build_batch_fix_prompt,
     build_prereq_system_prompt, build_prereq_user_prompt,
+    build_competency_system_prompt, build_competency_user_prompt,
 )
 from services.mcq_validator import (
     validate_questions, validate_single, question_hash, build_fix_instruction,
 )
-from services.vector_store import resolve_context
+from services.vector_store import resolve_context, retrieve_full_chapter
 from services.answer_shuffler import shuffle_answer_positions
 
 router = APIRouter()
 logger = logging.getLogger("ai_service.generate")
 
 PREREQUISITE_TOPIC = "Previous Knowledge Testing"
+COMPETENCY_TOPIC = "Competency Based Questions"
 
 
 @router.post("/ai/generate", response_model=GenerateResponse)
@@ -27,8 +29,31 @@ async def generate_assessment(req: GenerateRequest):
     # ── 1. Resolve context + build prompts ──────────────────────────────────
     _buffer = (req.num_questions - 1) // 5 + 1  # over-generate buffer
     is_prereq = req.topic.strip().lower() == PREREQUISITE_TOPIC.lower()
+    is_competency = req.topic.strip().lower() == COMPETENCY_TOPIC.lower()
 
-    if is_prereq:
+    if is_competency:
+        logger.info(f"Session {req.session_id}: competency assessment mode — full chapter, levels 4–5 only")
+        context_text = await retrieve_full_chapter(chapter_id=req.chapter_id)
+        if not context_text:
+            context_text = req.context_text
+        if not context_text:
+            raise HTTPException(
+                status_code=422,
+                detail="No context available. Upload a PDF for this chapter first.",
+            )
+        system_prompt = build_competency_system_prompt(
+            grade_level=req.grade_level,
+            subject=req.subject,
+            chapter=req.chapter,
+            board=req.board,
+        )
+        user_prompt = build_competency_user_prompt(
+            chapter=req.chapter,
+            num_questions=req.num_questions + _buffer,
+            context_text=context_text,
+            existing_question_stems=req.existing_question_stems or None,
+        )
+    elif is_prereq:
         # Previous Knowledge Testing — skip Qdrant, use AI's own curriculum knowledge
         logger.info(f"Session {req.session_id}: previous knowledge testing mode (grade {req.grade_level} → {max(1, req.grade_level - 1)})")
         system_prompt = build_prereq_system_prompt(
@@ -124,6 +149,10 @@ async def generate_assessment(req: GenerateRequest):
             )
         except Exception as exc:
             logger.warning(f"Session {req.session_id}: batch fix failed: {exc}")
+
+    # For competency mode: discard any questions below level 4
+    if is_competency:
+        valid = [q for q in valid if int(q.get("difficulty_level", 0)) >= 4]
 
     # Trim to requested count (over-generation buffer may produce extras)
     valid = valid[: req.num_questions]

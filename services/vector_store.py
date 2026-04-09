@@ -453,6 +453,56 @@ async def resolve_context(
     return context_text
 
 
+async def retrieve_full_chapter(chapter_id: str) -> str:
+    """
+    Returns ALL active chunks for a chapter, sorted by document order.
+    Used for whole-chapter assessment modes (e.g. Competency Assessment)
+    where topic-focused semantic retrieval is too narrow.
+    """
+    import asyncio
+    from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+
+    client = _get_qdrant()
+    chapter_filter = Filter(
+        must=[
+            FieldCondition(key="chapter_id", match=MatchValue(value=chapter_id)),
+            FieldCondition(key="is_active", match=MatchValue(value=True)),
+        ]
+    )
+
+    def _scroll():
+        all_points = []
+        offset = None
+        while True:
+            results, next_offset = client.scroll(
+                collection_name=COLLECTION_NAME,
+                scroll_filter=chapter_filter,
+                limit=100,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            all_points.extend(results)
+            if next_offset is None:
+                break
+            offset = next_offset
+        return all_points
+
+    points = await asyncio.get_event_loop().run_in_executor(None, _scroll)
+
+    if not points:
+        logger.warning(f"retrieve_full_chapter: no chunks found for chapter_id={chapter_id}")
+        return ""
+
+    points.sort(key=lambda p: (
+        p.payload.get("page_number", 0),
+        p.payload.get("chunk_index", 0),
+    ))
+
+    logger.info(f"retrieve_full_chapter: {len(points)} chunks for chapter_id={chapter_id}")
+    return "\n\n".join(p.payload.get("text", "") for p in points)
+
+
 def deactivate_by_pdf_id(pdf_id: str) -> None:
     """
     Soft-delete: set is_active=False on all vectors for this pdf_id.
