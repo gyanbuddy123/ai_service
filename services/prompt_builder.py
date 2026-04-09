@@ -45,6 +45,23 @@ Hint quality rules (ALL must be satisfied — no exceptions):
   2. Must NEVER contain any word from the correct answer option text (after removing stop words).
   3. Must NEVER eliminate wrong options (do not hint "it is NOT A or B").
   4. Should reference a concept, principle, or process rather than the answer itself.
+  5. Must be FULLY SELF-CONTAINED — strictly forbidden to reference:
+       • Theorem, Lemma, Corollary, Property, or Rule by number (e.g. "Theorem 6.6", "Rule 2.1")
+       • Textbook pages, chapters, sections, figures, or tables by number
+       • Phrases like "Refer to...", "See page...", "As stated in...", "According to Theorem..."
+     Instead, state the underlying principle or key idea directly in the hint text.
+     A student with no textbook must be able to use this hint.
+"""
+
+_EXPLANATION_RULES = """
+Explanation quality rules (ALL must be satisfied — no exceptions):
+  1. Must clearly justify WHY the correct answer is right and WHY each distractor is wrong.
+  2. Must be FULLY SELF-CONTAINED — strictly forbidden to reference:
+       • Theorem, Lemma, Corollary, Property, or Rule by number (e.g. "Theorem 6.6")
+       • Textbook pages, chapters, sections, figures, or tables by number
+       • Phrases like "Refer to...", "See page...", "As stated in...", "According to Theorem..."
+     Instead, explain the reasoning and logic inline — never point the student elsewhere.
+  3. Must use the same mobile-safe formatting rules as all other fields (no LaTeX).
 """
 
 _SELF_VERIFICATION = """
@@ -52,6 +69,8 @@ Self-verification (do this before submitting):
   For each question, verify:
   ✓ Every claim is supported by the provided chapter text
   ✓ Hint passes all hint rules above (no answer tokens)
+  ✓ Hint is self-contained — no theorem numbers, page references, or "Refer to..." phrases
+  ✓ Explanation is self-contained — no theorem numbers, page references, or "Refer to..." phrases
   ✓ All distractors are plausible but clearly wrong to a knowledgeable student
   ✓ Bloom's category matches the stem pattern for the difficulty level
   ✓ No two questions test the same specific fact or concept
@@ -200,6 +219,8 @@ Grade calibration: {grade_note}
 
 {_HINT_RULES}
 
+{_EXPLANATION_RULES}
+
 {_IMAGE_RULES}
 
 {_SELF_VERIFICATION}
@@ -276,6 +297,8 @@ Questions must be pitched at Class {prereq_grade} difficulty — not the current
 {_ANSWER_POSITION_RULES}
 
 {_HINT_RULES}
+
+{_EXPLANATION_RULES}
 
 {_IMAGE_RULES}
 
