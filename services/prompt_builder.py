@@ -322,7 +322,7 @@ def build_prereq_user_prompt(
         dedup_section = f"\nAlready-asked questions (do NOT repeat these topics):\n{stems_list}\n"
 
     return f"""Chapter: {chapter}
-Topic: Prerequisite Knowledge Check
+Topic: Previous Knowledge Testing
 Current Grade: {grade_level} | Prerequisite grade to assess: {prereq_grade}
 Number of questions to generate: {num_questions}
 {dedup_section}
