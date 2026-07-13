@@ -13,6 +13,7 @@ from services.prompt_builder import (
     build_comprehension_system_prompt, build_comprehension_user_prompt,
     build_grammar_system_prompt, build_grammar_user_prompt,
     build_lab_manual_system_prompt, build_lab_manual_user_prompt,
+    build_lab_practical_system_prompt, build_lab_practical_user_prompt,
 )
 from services.mcq_validator import (
     validate_questions, validate_single, question_hash, build_fix_instruction,
@@ -28,6 +29,7 @@ COMPETENCY_TOPIC = "Competency Based Questions"
 COMPREHENSION_TOPIC = "Comprehension Passage"
 GRAMMAR_TOPIC = "English Grammar"
 LAB_MANUAL_TOPIC = "Lab Manual"
+LAB_PRACTICAL_TOPIC = "Lab Practical"
 
 
 @router.post("/ai/generate", response_model=GenerateResponse)
@@ -39,6 +41,7 @@ async def generate_assessment(req: GenerateRequest):
     is_comprehension = req.topic.strip().lower() == COMPREHENSION_TOPIC.lower()
     is_grammar = req.topic.strip().lower() == GRAMMAR_TOPIC.lower()
     is_lab_manual = req.topic.strip().lower() == LAB_MANUAL_TOPIC.lower()
+    is_lab_practical = req.topic.strip().lower() == LAB_PRACTICAL_TOPIC.lower()
 
     if is_grammar:
         logger.info(f"Session {req.session_id}: English grammar mode (grade {req.grade_level})")
@@ -126,6 +129,28 @@ async def generate_assessment(req: GenerateRequest):
             board=req.board,
         )
         user_prompt = build_lab_manual_user_prompt(
+            chapter=req.chapter,
+            num_questions=req.num_questions + _buffer,
+            context_text=context_text,
+            existing_question_stems=req.existing_question_stems or None,
+        )
+    elif is_lab_practical:
+        logger.info(f"Session {req.session_id}: lab practical mode — sequential scenarios (grade {req.grade_level})")
+        context_text = await retrieve_full_chapter(chapter_id=req.chapter_id)
+        if not context_text:
+            context_text = req.context_text
+        if not context_text:
+            raise HTTPException(
+                status_code=422,
+                detail="No context available. Upload the lab manual PDF for this experiment first.",
+            )
+        system_prompt = build_lab_practical_system_prompt(
+            grade_level=req.grade_level,
+            subject=req.subject,
+            chapter=req.chapter,
+            board=req.board,
+        )
+        user_prompt = build_lab_practical_user_prompt(
             chapter=req.chapter,
             num_questions=req.num_questions + _buffer,
             context_text=context_text,

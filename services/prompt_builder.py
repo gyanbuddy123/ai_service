@@ -1069,3 +1069,165 @@ Images (MANDATORY — not optional for lab manuals):
   The image must show the PROBLEM SETUP only — never the answer. Label all parts except the one being asked about.
 
 Return all questions as a JSON array."""
+
+
+# ── Lab Practical / Sequential Scenario prompts ───────────────────────────────
+
+_LAB_PRACTICAL_RULES = """
+Lab Practical assessment rules — sequential scenario-based questions:
+
+  FORMAT: Generate questions in SCENARIO GROUPS. Each group has:
+    • A short experimental scenario (2–3 sentences) describing the student at a specific
+      moment while performing the experiment — what they have done, what they are seeing,
+      what they are about to do next.
+    • 3–4 sequential MCQ questions that follow from that scenario in temporal order.
+
+  HOW TO EMBED THE SCENARIO:
+    Every question_text MUST begin with the scenario block using this exact format:
+      "Scenario: [2–3 sentences describing the experimental situation at this moment]
+
+      [The specific question for this step]"
+
+    The scenario inside each question should be tailored to THAT question's context —
+    it is not identical across all questions in a group. It evolves as the experiment progresses.
+
+  SCENARIO GROUP STRUCTURE (for ~10 questions, generate 2–3 groups):
+    Group 1 — Setup & Preparation stage
+      Scenario covers: apparatus arrangement, zero error check, initial measurements, safety setup
+      Questions cover: what to do first, which instrument to use, how to set up correctly, safety action
+
+    Group 2 — Performing & Observing stage
+      Scenario covers: student mid-experiment, adding loads/reagents/current, reading instruments
+      Questions cover: what the reading means, what to record, what change is observed, what happens next
+
+    Group 3 — Analysis & Conclusion stage (if questions remain)
+      Scenario covers: student has completed data collection, plotting a graph, calculating a result
+      Questions cover: graph shape/slope meaning, formula application, source of error, conclusion
+
+  WITHIN EACH GROUP — questions must be sequential:
+    Q1 answers "what do I do / check first?"
+    Q2 answers "what am I observing / measuring right now?"
+    Q3 answers "what does this reading / result mean?"
+    Q4 (if present) answers "what is the next step / what would happen if...?"
+
+  QUESTION TYPES within groups:
+    • mcq_single  : for most scenario questions (one clear correct action/reading/meaning)
+    • mcq_multiple: for safety precautions and error analysis within a group
+    • Do NOT use rearrange in Lab Practical — the sequential flow IS the order
+
+  IMAGES: set image_prompt on exactly 1–2 questions across the entire set:
+    • Best candidate: a question in Group 1 showing the apparatus setup at that moment
+    • Second candidate: a question in Group 2/3 showing the graph or instrument reading
+    • All other questions: image_prompt must be null or omitted
+
+  FORBIDDEN in scenario or question text:
+    "the text says", "the manual states", "as mentioned above", "refer to page X",
+    "as shown in Table X.X", "according to the manual", "as described in the passage"
+
+  ALLOWED: "you are performing", "during the experiment", "at this stage",
+    "you have just", "you now", "the student observes", "after completing"
+"""
+
+_LAB_PRACTICAL_SELF_VERIFICATION = """
+Self-verification for Lab Practical questions (do this before submitting):
+  ✓ Every question_text starts with "Scenario:" followed by the experimental situation
+  ✓ Questions within each group follow the experiment in temporal/logical order
+  ✓ Each scenario is specific to that question's moment in the experiment (not copy-pasted)
+  ✓ No rearrange questions — sequential flow is embedded in the scenario structure
+  ✓ Correct answer is clearly supported by the experiment content provided
+  ✓ hint guides practical thinking without revealing the answer
+  ✓ explanation justifies the correct answer and why each distractor is wrong
+  ✓ No reference to page numbers, text sections, or "the manual says"
+  ✓ Safety questions use mcq_multiple
+  ✓ Exactly 1–2 questions have image_prompt set; all others have image_prompt null
+  If any check fails — fix the question before submitting.
+"""
+
+
+def build_lab_practical_system_prompt(
+    grade_level: int, subject: str = "", chapter: str = "", board: str = "CBSE"
+) -> str:
+    if grade_level <= 5:
+        grade_note = "Use concrete, simple language. Short sentences. No jargon."
+    elif grade_level <= 8:
+        grade_note = "Use moderate academic language. Some subject-specific vocabulary is fine."
+    elif grade_level <= 10:
+        grade_note = "Use academic language appropriate for secondary school students."
+    else:
+        grade_note = "Use college-preparatory academic language with full subject terminology."
+
+    parts = [f"Board: {board}", f"Grade: {grade_level}"]
+    if subject:
+        parts.append(f"Subject: {subject}")
+    if chapter:
+        parts.append(f"Chapter/Experiment: {chapter}")
+    context_line = " | ".join(parts)
+
+    return f"""You are an expert science lab assessment designer specialising in practical experiment assessments. Your task is to write scenario-based sequential questions that walk a student through performing an experiment step by step.
+
+Each question must begin with a short experimental scenario (2–3 sentences) describing the student at a specific moment in the lab. Questions within a group flow in the order the experiment actually happens — setup → performing → observing → analysing.
+
+Curriculum context: {context_line}
+Grade calibration: {grade_note}
+
+{_MOBILE_FORMAT_RULES}
+
+{_LAB_PRACTICAL_RULES}
+
+{_BLOOM_MAPPING}
+
+{_QUESTION_TYPE_RULES}
+
+{_ANSWER_POSITION_RULES}
+
+{_HINT_RULES}
+
+{_EXPLANATION_RULES}
+
+{_LAB_PRACTICAL_SELF_VERIFICATION}
+
+Output format: return your response as a flat JSON array of question objects. No markdown, no code fences, no plain text."""
+
+
+def build_lab_practical_user_prompt(
+    chapter: str,
+    num_questions: int,
+    context_text: str,
+    existing_question_stems: list[str] | None = None,
+) -> str:
+    dedup_section = ""
+    if existing_question_stems:
+        stems_list = "\n".join(f"  - {s}" for s in existing_question_stems)
+        dedup_section = f"\nAlready-asked questions (do NOT repeat these):\n{stems_list}\n"
+
+    if num_questions <= 4:
+        group_plan = "Generate 1 scenario group with all questions."
+    elif num_questions <= 7:
+        group_plan = "Generate 2 scenario groups of 3–4 questions each."
+    else:
+        group_plan = "Generate 3 scenario groups covering: (1) Setup & Preparation, (2) Performing & Observing, (3) Analysis & Conclusion. Distribute questions evenly across the groups."
+
+    return f"""Experiment: {chapter}
+Assessment Type: Lab Practical — Sequential Scenario Questions
+Number of questions to generate: {num_questions}
+{dedup_section}
+Experiment content (use ONLY the information below to write scenarios and questions):
+---
+{context_text}
+---
+
+{group_plan}
+
+Each question_text MUST follow this exact format:
+  "Scenario: [2–3 sentences describing the student at this specific moment in the experiment]
+
+  [The MCQ question for this step]"
+
+The scenario must be grounded in the experiment content above — use the actual apparatus names, measurements, and procedure steps from the experiment. Each scenario in a group advances the experiment forward in time.
+
+Question types: mcq_single for most questions, mcq_multiple for safety precautions and error analysis.
+Do NOT use rearrange — the sequential flow is built into the scenario structure.
+Images: set image_prompt on exactly 1–2 questions only (apparatus setup or graph/reading). All others: null.
+Difficulty: levels 2–4 — these are applied questions, not pure recall.
+
+Return all {num_questions} questions as a flat JSON array."""
