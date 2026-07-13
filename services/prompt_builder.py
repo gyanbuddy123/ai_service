@@ -854,37 +854,76 @@ def build_modify_user_prompt(
 
 _LAB_MANUAL_RULES = """
 Lab manual assessment rules — this is a science experiment assessment:
-  • Questions must test understanding of the EXPERIMENT — not just standalone textbook theory.
-  • Cover all sections of the lab manual across the question set:
-      - Aim / Purpose       : What is the aim of this experiment?
-      - Apparatus           : Identify equipment used; what is each item's role?
-      - Safety Precautions  : Use mcq_multiple — multiple precautions may apply.
-      - Theory / Concept    : Test understanding of formulas, principles, and laws used.
-      - Procedure Steps     : Use rearrange — order the experimental steps correctly.
-      - Observation         : What is observed when a specific variable changes?
-      - Data Interpretation : What does the slope / graph / table value represent?
-      - Conclusion          : What can be concluded from the experimental results?
-      - Error Analysis      : Use mcq_multiple — multiple sources of error may apply.
-      - Extension / Application: Apply the concept to a novel situation.
 
-  • Procedure rearrange questions MUST write each step's actual content as option_text —
+  CORE PRINCIPLE: At least 50% of questions MUST use IN-LAB SCENARIO framing — put the student
+  physically inside the experiment. The student should feel they are reading these questions
+  WHILE performing the experiment, not after reading a textbook.
+
+  ── IN-LAB SCENARIO QUESTION TYPES (mandatory — use for ≥50% of questions) ──────────────────
+  These put the student in the lab and require practical thinking:
+
+  a) DOING-STEP scenarios — student is mid-experiment:
+       "You are about to [specific step]. What must you do first?"
+       "While [performing step X], you notice [observation]. What does this indicate?"
+       "You have just completed [step]. What is the NEXT action you should take?"
+       "During the experiment, [something unexpected happens]. What is the most likely cause?"
+
+  b) DECISION-MAKING scenarios — student must choose the correct action:
+       "You are setting up the apparatus. Which arrangement is correct?"
+       "You need to measure [quantity]. Which instrument from the apparatus list should you use?"
+       "The reading on [instrument] is [value]. What should you record?"
+       "You complete three trials and get readings [X, Y, Z]. How do you calculate the final result?"
+
+  c) TROUBLESHOOTING scenarios — something goes wrong during the experiment:
+       "A student performs this experiment and finds [unexpected result]. What is the most likely error?"
+       "The [instrument] shows zero error before starting. What should the student do?"
+       "After performing the experiment, the conclusion does not match expected results. Which step most likely introduced the error?"
+
+  d) SAFETY-IN-ACTION scenarios — practical safety during the experiment:
+       "Before starting this experiment, which precaution is MOST important?"
+       "During the experiment, the [apparatus] slips. What should the student do IMMEDIATELY?"
+       (Use mcq_multiple for these — multiple precautions often apply together.)
+
+  e) OBSERVATION-IN-PROGRESS — what the student sees as they perform:
+       "As [variable] increases, what change do you observe in [measurement]?"
+       "You are recording readings in a table. When [condition X] is true, what value do you expect?"
+       "A student plots a graph of [X vs Y] from the experimental data. What shape should the graph be?"
+
+  ── KNOWLEDGE/THEORY QUESTIONS (remaining ≤50%) ────────────────────────────────────────────
+  These test understanding of the experimental science — not pure rote definition recall:
+      - Aim / Purpose       : WHY is this experiment performed? What concept does it verify?
+      - Apparatus           : What is the ROLE of each specific piece of equipment?
+      - Theory / Concept    : Test formulas, laws, and principles AS USED in this experiment.
+      - Procedure Steps     : Use rearrange — write each step's actual content as option_text.
+      - Data Interpretation : What does the slope / graph shape / calculated value represent?
+      - Conclusion          : What conclusion can be drawn from [specific result]?
+      - Extension           : Apply the same principle to a novel real-world situation.
+
+  ── RULES FOR ALL QUESTIONS ─────────────────────────────────────────────────────────────────
+  • Rearrange questions MUST write each step's actual content as option_text —
     NEVER use labels like "Step 1", "Step 2", "Step A", or any numbered reference.
-
-  • Allowed in question_text: "in this experiment", "using the apparatus", "during the experiment".
-  • STILL FORBIDDEN: "the text says", "the manual states", "as mentioned above", "refer to page X",
-    "as shown in Table X.X", "according to the manual".
+  • Safety and error questions MUST use mcq_multiple — multiple options can be correct.
+  • Each question must test a DIFFERENT aspect of the experiment — no two questions
+    should overlap in what they test.
+  • Allowed phrases: "in this experiment", "using the apparatus", "during the experiment",
+    "you are performing", "a student is conducting", "while setting up".
+  • STRICTLY FORBIDDEN: "the text says", "the manual states", "as mentioned above",
+    "refer to page X", "as shown in Table X.X", "according to the manual",
+    "as described in the passage".
 """
 
 _LAB_MANUAL_SELF_VERIFICATION = """
 Self-verification for lab manual questions (do this before submitting):
   For each question, verify:
-  ✓ Question tests experiment understanding — not pure rote recall of a definition
+  ✓ At least half the questions use in-lab scenario framing ("you are performing", "during the experiment", "a student notices")
+  ✓ Question requires the student to THINK or ACT — not just recall a definition
   ✓ Correct answer is clearly supported by the experiment content provided
-  ✓ hint guides thinking without revealing the answer or referencing the manual
+  ✓ hint guides the student's practical thinking without revealing the answer
   ✓ explanation justifies the correct answer and why each distractor is wrong
-  ✓ rearrange questions: all options have is_correct=true and a unique correct_order
+  ✓ rearrange questions: all options have is_correct=true and a unique correct_order with actual step content (no "Step 1" labels)
   ✓ No two questions test the exact same step, observation, or fact
   ✓ No reference to page numbers, text sections, or "the manual says"
+  ✓ Safety and error questions use mcq_multiple
   If any check fails — fix the question before submitting.
 """
 
@@ -908,9 +947,9 @@ def build_lab_manual_system_prompt(
         parts.append(f"Chapter/Experiment: {chapter}")
     context_line = " | ".join(parts)
 
-    return f"""You are an expert educational assessment designer specialising in science laboratory experiment assessment.
+    return f"""You are an expert science lab assessment designer. Your specialty is writing questions that make students THINK like they are physically inside the lab — making decisions, recording observations, troubleshooting problems, and choosing the next action — not just recalling what they read.
 
-Your task is to generate MCQs that test a student's understanding of a science experiment — covering aim, apparatus, theory, procedure, observations, data interpretation, conclusions, error analysis, and extensions.
+Your task is to generate MCQs for a science experiment assessment. At least half the questions must put the student in a real lab scenario (mid-experiment decision, troubleshooting, observation in progress, safety action). The remaining questions test the underlying scientific concepts and procedure knowledge that make sense of what happens in the lab.
 
 Curriculum context: {context_line}
 Grade calibration: {grade_note}
@@ -958,4 +997,29 @@ Experiment content (use ONLY the information below to create questions):
 {context_text}
 ---
 
-Generate exactly {num_questions} MCQ question(s) covering the FULL breadth of this experiment. Distribute questions across: aim, apparatus, safety, theory, procedure steps, observations, data interpretation, conclusion, and error analysis. Use rearrange for procedure step ordering, mcq_multiple for safety/error questions, and mcq_single for all others. Where a diagram genuinely aids a question, set image_prompt. Vary difficulty levels based on the cognitive demand of each section. Return all questions as a JSON array."""
+Generate exactly {num_questions} question(s) for this lab experiment. Follow this mandatory split:
+
+IN-LAB SCENARIO questions (≥50% of total — these MUST be present):
+  Write questions where the student is physically performing the experiment right now.
+  Use stems like:
+    • "You are performing this experiment and [situation]. What should you do?"
+    • "While [specific step], you notice [observation]. What does this indicate?"
+    • "You have completed [step]. What is the next correct action?"
+    • "A student is conducting this experiment and [problem occurs]. What is the most likely cause?"
+    • "Before starting, you must [safety action]. What is the reason for this?"
+    • "You record the reading as [value]. Is this correct? Why / why not?"
+  These questions should require the student to DECIDE, OBSERVE, or TROUBLESHOOT — not just recall.
+
+KNOWLEDGE questions (remaining ≤50%):
+  Test: aim/purpose (why this experiment), apparatus roles, underlying theory and formula,
+  procedure step ordering (use rearrange), data interpretation, conclusion, and application.
+
+Question type assignment:
+  • rearrange for procedure step ordering — write each step's actual content, never "Step 1"
+  • mcq_multiple for safety precautions and error analysis (multiple correct options)
+  • mcq_single for all other questions
+
+Difficulty: vary levels (1–5) to match cognitive demand — in-lab scenario questions typically fall at levels 3–5.
+Images: set image_prompt where a diagram of apparatus setup or graph would help the student.
+
+Return all questions as a JSON array."""
