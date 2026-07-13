@@ -1074,66 +1074,94 @@ Return all questions as a JSON array."""
 # ── Lab Practical / Sequential Scenario prompts ───────────────────────────────
 
 _LAB_PRACTICAL_RULES = """
-Lab Practical assessment rules — sequential scenario-based questions:
+Lab Practical assessment rules — CHAINED sequential scenario questions:
 
-  FORMAT: Generate questions in SCENARIO GROUPS. Each group has:
-    • A short experimental scenario (2–3 sentences) describing the student at a specific
-      moment while performing the experiment — what they have done, what they are seeing,
-      what they are about to do next.
-    • 3–4 sequential MCQ questions that follow from that scenario in temporal order.
+  CORE RULE — TRUE CHAIN: Questions within a group must be a CHAIN, not isolated scenarios.
+  This means:
+    • Q1 establishes an action or measurement
+    • Q2's scenario states Q1's result as a FACT, then asks the next step
+    • Q3's scenario states Q1 + Q2's results as FACTS, then asks the next step
+    • Q4's scenario carries forward all prior results and reaches a decision or conclusion
+
+  The student should feel they are progressing through ONE continuous experiment,
+  with each question handing them the result of the previous step.
+
+  ── CHAIN EXAMPLE (Hooke's Law) ────────────────────────────────────────────────
+  Q1: "Scenario: You are about to perform the Hooke's Law experiment. The spring
+       is hanging from the retort stand with no weights attached.
+       What is the FIRST measurement you must record before adding any weights?"
+       → Correct answer: natural / original length of the spring
+
+  Q2: "Scenario: You recorded the natural length of the spring as 8.0 cm.
+       You now place a 100 g slotted weight on the hanger and the spring stretches.
+       The metre rule now reads 10.0 cm. What is the extension of the spring?"
+       → Notice: Q2 states "You recorded the natural length as 8.0 cm" — Q1's result
+
+  Q3: "Scenario: You recorded that a 100 g load produces a 2.0 cm extension.
+       You add another 100 g weight (total load = 200 g).
+       According to Hooke's Law, what extension should you now expect?"
+       → Notice: Q3 states "100 g produces 2.0 cm" — Q2's result
+
+  Q4: "Scenario: You have completed all trials. At 500 g load, you expected
+       10.0 cm extension but observed only 8.5 cm.
+       What does this tell you about the spring at this load?"
+       → Notice: Q4 carries forward the established data and asks for the conclusion
+  ── END EXAMPLE ────────────────────────────────────────────────────────────────
 
   HOW TO EMBED THE SCENARIO:
-    Every question_text MUST begin with the scenario block using this exact format:
-      "Scenario: [2–3 sentences describing the experimental situation at this moment]
+    Every question_text MUST start with "Scenario:" followed by 2–3 sentences:
+      • State the accumulated facts/results from all previous questions in this group
+      • Describe what is happening RIGHT NOW at this step
+      Then on a new line, ask the specific question for this step.
+
+    Format:
+      "Scenario: [accumulated state from previous steps + current moment description]
 
       [The specific question for this step]"
 
-    The scenario inside each question should be tailored to THAT question's context —
-    it is not identical across all questions in a group. It evolves as the experiment progresses.
+  CHAIN STRUCTURE FOR ~10 QUESTIONS — generate 2–3 groups:
 
-  SCENARIO GROUP STRUCTURE (for ~10 questions, generate 2–3 groups):
-    Group 1 — Setup & Preparation stage
-      Scenario covers: apparatus arrangement, zero error check, initial measurements, safety setup
-      Questions cover: what to do first, which instrument to use, how to set up correctly, safety action
+    Group 1 — Setup & First Measurement (3–4 questions chained)
+      Q1: What to check / measure first (zero error, natural length, initial reading)
+      Q2: Uses Q1's result — first action taken, first reading recorded
+      Q3: Uses Q1+Q2 — applies the first reading to do something next
+      Q4: Uses Q1+Q2+Q3 — a safety check, unit check, or pre-trial verification
 
-    Group 2 — Performing & Observing stage
-      Scenario covers: student mid-experiment, adding loads/reagents/current, reading instruments
-      Questions cover: what the reading means, what to record, what change is observed, what happens next
+    Group 2 — Performing Trials & Observing (3–4 questions chained)
+      Q1: First trial — what to do, what to expect
+      Q2: Uses trial-1 result — second trial, what changes, what to record
+      Q3: Uses trial-1+2 results — pattern observed, expected next value
+      Q4: Uses all trial results — anomaly or verification step
 
-    Group 3 — Analysis & Conclusion stage (if questions remain)
-      Scenario covers: student has completed data collection, plotting a graph, calculating a result
-      Questions cover: graph shape/slope meaning, formula application, source of error, conclusion
+    Group 3 — Analysis & Conclusion (if questions remain, 2–3 questions chained)
+      Q1: Plot the data — what does the graph look like?
+      Q2: Uses the graph — what does the slope / intercept represent?
+      Q3: Uses all results — draw the conclusion or identify the error source
 
-  WITHIN EACH GROUP — questions must be sequential:
-    Q1 answers "what do I do / check first?"
-    Q2 answers "what am I observing / measuring right now?"
-    Q3 answers "what does this reading / result mean?"
-    Q4 (if present) answers "what is the next step / what would happen if...?"
-
-  QUESTION TYPES within groups:
-    • mcq_single  : for most scenario questions (one clear correct action/reading/meaning)
-    • mcq_multiple: for safety precautions and error analysis within a group
-    • Do NOT use rearrange in Lab Practical — the sequential flow IS the order
+  QUESTION TYPES:
+    • mcq_single  : for most chain questions (one correct next action / reading / conclusion)
+    • mcq_multiple: for safety precautions (typically Q4 of Group 1) and error analysis
+    • Do NOT use rearrange — the chain IS the sequence
 
   IMAGES: set image_prompt on exactly 1–2 questions across the entire set:
-    • Best candidate: a question in Group 1 showing the apparatus setup at that moment
-    • Second candidate: a question in Group 2/3 showing the graph or instrument reading
+    • Best: Group 1 Q1 — show the apparatus setup (label all parts except the one being asked about)
+    • Second: Group 3 — show the graph plotted from the experimental data
     • All other questions: image_prompt must be null or omitted
 
-  FORBIDDEN in scenario or question text:
-    "the text says", "the manual states", "as mentioned above", "refer to page X",
+  FORBIDDEN: "the text says", "the manual states", "refer to page X",
     "as shown in Table X.X", "according to the manual", "as described in the passage"
-
-  ALLOWED: "you are performing", "during the experiment", "at this stage",
-    "you have just", "you now", "the student observes", "after completing"
+  ALLOWED: "you recorded", "you observed", "you measured", "you found that",
+    "you have just", "at this stage", "continuing the experiment"
 """
 
 _LAB_PRACTICAL_SELF_VERIFICATION = """
 Self-verification for Lab Practical questions (do this before submitting):
-  ✓ Every question_text starts with "Scenario:" followed by the experimental situation
-  ✓ Questions within each group follow the experiment in temporal/logical order
-  ✓ Each scenario is specific to that question's moment in the experiment (not copy-pasted)
-  ✓ No rearrange questions — sequential flow is embedded in the scenario structure
+  ✓ Questions within each group form a TRUE CHAIN — Q2's scenario states Q1's result,
+    Q3's scenario states Q1+Q2 results, Q4 carries all prior results forward
+  ✓ Every question_text starts with "Scenario:" and includes accumulated facts from prior steps
+  ✓ No two questions in a group have identical or near-identical scenarios
+  ✓ The student who reads Q3 can see exactly what happened in Q1 and Q2 from the scenario alone
+  ✓ No rearrange questions — chain flow is embedded in the scenario progression
   ✓ Correct answer is clearly supported by the experiment content provided
   ✓ hint guides practical thinking without revealing the answer
   ✓ explanation justifies the correct answer and why each distractor is wrong
@@ -1208,7 +1236,7 @@ def build_lab_practical_user_prompt(
         group_plan = "Generate 3 scenario groups covering: (1) Setup & Preparation, (2) Performing & Observing, (3) Analysis & Conclusion. Distribute questions evenly across the groups."
 
     return f"""Experiment: {chapter}
-Assessment Type: Lab Practical — Sequential Scenario Questions
+Assessment Type: Lab Practical — Chained Sequential Questions
 Number of questions to generate: {num_questions}
 {dedup_section}
 Experiment content (use ONLY the information below to write scenarios and questions):
@@ -1218,16 +1246,26 @@ Experiment content (use ONLY the information below to write scenarios and questi
 
 {group_plan}
 
-Each question_text MUST follow this exact format:
-  "Scenario: [2–3 sentences describing the student at this specific moment in the experiment]
+CHAIN RULE — the most important instruction:
+  Within each group, each question's scenario MUST state the result/reading/observation
+  established by ALL previous questions in that group. Think of it as a running experiment log:
+    Q1 scenario: the starting state
+    Q2 scenario: "You recorded [Q1 result]. Now you [next action]..."
+    Q3 scenario: "You recorded [Q1 result]. You found [Q2 result]. Now..."
+    Q4 scenario: "You have recorded [Q1+Q2+Q3 results]. You now observe..."
+
+  Use REAL values from the experiment (actual measurements, loads, readings from the PDF).
+  The student reading Q3 must be able to see exactly what happened in Q1 and Q2
+  from the scenario text alone — with no memory of the previous questions needed.
+
+question_text format (strictly required):
+  "Scenario: [accumulated experiment state + current moment]
 
   [The MCQ question for this step]"
 
-The scenario must be grounded in the experiment content above — use the actual apparatus names, measurements, and procedure steps from the experiment. Each scenario in a group advances the experiment forward in time.
-
-Question types: mcq_single for most questions, mcq_multiple for safety precautions and error analysis.
-Do NOT use rearrange — the sequential flow is built into the scenario structure.
-Images: set image_prompt on exactly 1–2 questions only (apparatus setup or graph/reading). All others: null.
-Difficulty: levels 2–4 — these are applied questions, not pure recall.
+Question types: mcq_single for most; mcq_multiple for safety/error analysis.
+Do NOT use rearrange.
+Images: exactly 1–2 questions across the full set (apparatus setup or graph). All others: null.
+Difficulty: levels 2–4.
 
 Return all {num_questions} questions as a flat JSON array."""
