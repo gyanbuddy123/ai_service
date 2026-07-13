@@ -852,7 +852,43 @@ def build_modify_user_prompt(
 
 # ── Lab Manual / Science Experiment prompts ───────────────────────────────────
 
-_LAB_MANUAL_RULES = """
+_LAB_MANUAL_IMAGE_RULES = """
+Lab manual image rules — MANDATORY (not optional like general questions):
+
+  For lab manual / science experiment questions, images are required in these cases:
+  REQUIRED (you MUST set image_prompt for these question types):
+    1. Apparatus / Setup questions — show the experimental setup or arrangement of equipment.
+         image_prompt example: "A diagram showing [apparatus names] arranged as in the experiment.
+         Label each component. Leave the [specific part being asked about] unlabelled or marked '?'."
+
+    2. Observation / Graph questions — show a graph or data table from the experiment.
+         image_prompt example: "A graph with [X-axis label] on the horizontal axis and
+         [Y-axis label] on the vertical axis. Plot the data points from the experiment.
+         The graph shows a [linear/curved/etc.] relationship. The slope or specific point
+         being asked about is marked with '?'."
+
+    3. In-lab scenario with a visible setup — show the experiment in progress at the step
+       described in the question.
+         image_prompt example: "A student is performing [specific step of the experiment].
+         Show the apparatus in the state described: [specific details of what is visible].
+         Label all components. Do NOT show the result or answer."
+
+    4. Safety / Hazard questions — show a lab scene where the safety concern is visible.
+         image_prompt example: "A lab bench with [apparatus]. Show [the hazard situation
+         being described]. Do NOT label or mark the correct safety action."
+
+  OPTIONAL (set image_prompt only if a diagram genuinely adds value):
+    - Aim/purpose questions (usually no image needed)
+    - Theory/formula questions (add image if a diagram of the concept helps)
+    - Conclusion questions (add image if showing the final result graph helps)
+    - Rearrange / procedure ordering (no image needed — the steps ARE the question)
+
+  Image quality rules (same as always):
+    • Show ONLY the problem setup — NEVER the answer
+    • Label all components except the one being asked about (mark it '?' instead)
+    • White background, clean educational diagram style
+    • For science experiments: use clear line-art style with component labels
+"""
 Lab manual assessment rules — this is a science experiment assessment:
 
   CORE PRINCIPLE: At least 50% of questions MUST use IN-LAB SCENARIO framing — put the student
@@ -924,6 +960,7 @@ Self-verification for lab manual questions (do this before submitting):
   ✓ No two questions test the exact same step, observation, or fact
   ✓ No reference to page numbers, text sections, or "the manual says"
   ✓ Safety and error questions use mcq_multiple
+  ✓ IMAGE CHECK: apparatus/setup questions have image_prompt set; observation/graph questions have image_prompt set; in-lab scenario questions with a visible setup have image_prompt set — at minimum 2 questions in the set must have image_prompt
   If any check fails — fix the question before submitting.
 """
 
@@ -970,7 +1007,7 @@ Grade calibration: {grade_note}
 
 {_EXPLANATION_RULES}
 
-{_IMAGE_RULES}
+{_LAB_MANUAL_IMAGE_RULES}
 
 {_LAB_MANUAL_SELF_VERIFICATION}
 
@@ -1020,6 +1057,13 @@ Question type assignment:
   • mcq_single for all other questions
 
 Difficulty: vary levels (1–5) to match cognitive demand — in-lab scenario questions typically fall at levels 3–5.
-Images: set image_prompt where a diagram of apparatus setup or graph would help the student.
+
+Images (MANDATORY — not optional for lab manuals):
+  You MUST set image_prompt on at least 2 questions, and SHOULD set it on 3–4 where relevant.
+  Required image types:
+    • Apparatus/setup question → diagram of the apparatus arrangement with one part unlabelled or marked '?'
+    • Observation/graph question → a graph with the data from this experiment plotted; mark the value being asked about with '?'
+    • In-lab scenario with a visible setup → show the experiment at the step described in the question
+  The image must show the PROBLEM SETUP only — never the answer. Label all parts except the one being asked about.
 
 Return all questions as a JSON array."""
