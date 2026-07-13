@@ -855,8 +855,9 @@ def build_modify_user_prompt(
 _LAB_MANUAL_IMAGE_RULES = """
 Lab manual image rules — MANDATORY (not optional like general questions):
 
-  For lab manual / science experiment questions, images are required in these cases:
-  REQUIRED (you MUST set image_prompt for these question types):
+  For lab manual / science experiment questions, set image_prompt on EXACTLY 2 or 3 questions total — no more.
+  Choose the questions where a diagram adds the most educational value. Priority order:
+  REQUIRED (pick 2–3 from these question types, then stop):
     1. Apparatus / Setup questions — show the experimental setup or arrangement of equipment.
          image_prompt example: "A diagram showing [apparatus names] arranged as in the experiment.
          Label each component. Leave the [specific part being asked about] unlabelled or marked '?'."
@@ -960,7 +961,7 @@ Self-verification for lab manual questions (do this before submitting):
   ✓ No two questions test the exact same step, observation, or fact
   ✓ No reference to page numbers, text sections, or "the manual says"
   ✓ Safety and error questions use mcq_multiple
-  ✓ IMAGE CHECK: apparatus/setup questions have image_prompt set; observation/graph questions have image_prompt set; in-lab scenario questions with a visible setup have image_prompt set — at minimum 2 questions in the set must have image_prompt
+  ✓ IMAGE CHECK: exactly 2 or 3 questions have image_prompt set — no more, no fewer. The chosen questions are apparatus/setup, observation/graph, or in-lab scenario with a visible setup. All other questions have image_prompt null or omitted.
   If any check fails — fix the question before submitting.
 """
 
@@ -1059,11 +1060,12 @@ Question type assignment:
 Difficulty: vary levels (1–5) to match cognitive demand — in-lab scenario questions typically fall at levels 3–5.
 
 Images (MANDATORY — not optional for lab manuals):
-  You MUST set image_prompt on at least 2 questions, and SHOULD set it on 3–4 where relevant.
-  Required image types:
+  You MUST set image_prompt on EXACTLY 2 or 3 questions — no more, no less.
+  Choose the 2–3 questions where a diagram adds the most value:
     • Apparatus/setup question → diagram of the apparatus arrangement with one part unlabelled or marked '?'
     • Observation/graph question → a graph with the data from this experiment plotted; mark the value being asked about with '?'
     • In-lab scenario with a visible setup → show the experiment at the step described in the question
+  All other questions must have image_prompt set to null or omitted.
   The image must show the PROBLEM SETUP only — never the answer. Label all parts except the one being asked about.
 
 Return all questions as a JSON array."""
