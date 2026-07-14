@@ -1648,3 +1648,208 @@ Difficulty: level 1 (name the apparatus) to level 3 (correct step sequence, role
 Images: exactly 1–2 questions — apparatus setup diagram with one component unlabelled ('?').
 
 Return all questions as a JSON array."""
+
+
+# ── Setup Practical / Chained Setup Questions ─────────────────────────────────
+
+_SETUP_PRACTICAL_RULES = """
+Setup Practical assessment rules — CHAINED sequential setup questions:
+
+  CORE RULE — TRUE CHAIN (setup edition):
+  Questions within a group walk the student through assembling and preparing the
+  experiment step by step. Each question's scenario carries forward EXACTLY what
+  has been set up so far, so the student always knows the current state.
+
+    • Q1 — starting state: nothing is set up yet; ask what to do first
+    • Q2 — scenario states what Q1 established; ask what to add or do next
+    • Q3 — scenario states Q1 + Q2 state; ask the next setup action
+    • Q4 — scenario states the full accumulated setup; ask the final preparation step
+
+  ── CHAIN EXAMPLE (Hooke's Law setup) ─────────────────────────────────────────
+  Q1: "Scenario: You are about to set up the Hooke's Law experiment. You have all
+       the apparatus in front of you: a retort stand, a bent aluminium rod, a spring,
+       a slotted mass hanger with pointer, a metal ruler, and slotted masses.
+       What is the FIRST thing you should assemble?"
+       → Answer: Attach the bent aluminium rod to the top of the retort stand
+
+  Q2: "Scenario: You have attached the bent aluminium rod to the top of the retort
+       stand. You now need to add the spring to the setup.
+       Where should the spring be attached?"
+       → Answer: Hung from the hook at the end of the bent aluminium rod
+       → Notice: Q2 states 'You have attached the bent aluminium rod' — Q1's result
+
+  Q3: "Scenario: You have attached the bent aluminium rod to the retort stand and
+       hung the spring from it. You now attach the slotted mass hanger with pointer
+       to the bottom of the spring.
+       What must you position NEXT to be able to take readings?"
+       → Answer: The metal ruler alongside the spring
+       → Notice: Q3 carries forward both Q1 and Q2 results
+
+  Q4: "Scenario: You have the retort stand with aluminium rod, spring, and slotted
+       mass hanger all assembled. The metal ruler is positioned alongside the spring.
+       Before adding any masses, what is the one reading you must record first?"
+       → Answer: The initial (zero) reading of the pointer on the ruler
+       → Notice: Q4 describes the complete setup built up from Q1-Q3
+  ── END EXAMPLE ────────────────────────────────────────────────────────────────
+
+  SCENARIO FORMAT — every question_text MUST start with "Scenario:":
+    "Scenario: [describe exactly what has been assembled/done so far]
+
+    [The setup question for this step]"
+
+  CHAIN STRUCTURE FOR ~10 QUESTIONS — generate 2–3 groups:
+
+    Group 1 — Assembling the Apparatus (3–4 questions)
+      Q1: What to do first (base, stand, first component)
+      Q2: Uses Q1 → what to attach or connect next
+      Q3: Uses Q1+Q2 → what to add next (measuring instrument, etc.)
+      Q4: Uses Q1+Q2+Q3 → final check or zero reading before starting
+
+    Group 2 — Preparing to Measure (3–4 questions)
+      Q1: Apparatus is assembled → what initial check or calibration to perform
+      Q2: Uses Q1 → what to verify about the measuring instrument alignment
+      Q3: Uses Q1+Q2 → what to confirm before the first mass is added
+      Q4: Uses Q1+Q2+Q3 → what the student is now ready to do
+
+    Group 3 — First Measurement Setup (if questions remain, 2–3 questions)
+      Q1: Setup is complete → what is the correct way to add the first change
+      Q2: Uses Q1 → what to do immediately after adding the first change
+      Q3: Uses Q1+Q2 → what to verify before recording the reading
+
+  QUESTION TYPES:
+    • mcq_single: for most chain questions (one correct next action)
+    • mcq_multiple: for "which of these must be checked?" setup verifications
+    • Do NOT use rearrange — the chain IS the sequence
+
+  IMAGES: set image_prompt on exactly 1–2 questions:
+    • Best: Group 1 Q1 — show all apparatus laid out, one unlabelled ('?')
+    • Second: Group 1 Q3 or Q4 — show partially assembled setup
+    • All others: image_prompt null or omitted
+
+  STRICTLY EXCLUDED:
+    ✗ Theory, formulas, calculations (e.g. "What does k represent?")
+    ✗ Observations or data recording (e.g. "What value did you read?")
+    ✗ Data analysis or conclusions
+    ✗ Full in-lab experiment scenarios (adding masses, watching spring stretch)
+    These belong to Introduction to Experiment, Lab Manual, and Lab Practical topics.
+
+  FORBIDDEN: "the text says", "the manual states", "according to the passage"
+  ALLOWED: "you have assembled", "you have attached", "you have positioned",
+           "you have verified", "the setup now has", "continuing the setup"
+"""
+
+_SETUP_PRACTICAL_SELF_VERIFICATION = """
+Self-verification for Setup Practical questions (do this before submitting):
+  ✓ Questions within each group form a TRUE CHAIN — Q2 states what Q1 established,
+    Q3 states Q1+Q2, Q4 carries the full accumulated setup state
+  ✓ Every question_text starts with "Scenario:" describing current setup state
+  ✓ No two questions in a group describe the same setup state
+  ✓ All questions are about SETUP ONLY — no theory, no formula, no data
+  ✓ No rearrange questions — the chain flow handles the sequence
+  ✓ hint guides the student toward the correct next setup action
+  ✓ explanation justifies why this is the correct next step and why others are wrong
+  ✓ Exactly 1–2 questions have image_prompt; all others null
+  ✓ No reference to "the text says", "the manual states", "refer to page X"
+  If any check fails — fix the question before submitting.
+"""
+
+
+def build_setup_practical_system_prompt(
+    grade_level: int, subject: str = "", chapter: str = "", board: str = "CBSE"
+) -> str:
+    if grade_level <= 5:
+        grade_note = "Use concrete, simple language. Short sentences. No jargon."
+    elif grade_level <= 8:
+        grade_note = "Use moderate academic language. Some subject-specific vocabulary is fine."
+    elif grade_level <= 10:
+        grade_note = "Use academic language appropriate for secondary school students."
+    else:
+        grade_note = "Use college-preparatory academic language with full subject terminology."
+
+    parts = [f"Board: {board}", f"Grade: {grade_level}"]
+    if subject:
+        parts.append(f"Subject: {subject}")
+    if chapter:
+        parts.append(f"Chapter/Experiment: {chapter}")
+    context_line = " | ".join(parts)
+
+    return f"""You are an expert science assessment designer specialising in laboratory setup and apparatus assembly.
+
+Your task is to generate chained sequential MCQs that walk a student step by step through the process of SETTING UP a science experiment — from unpacking the apparatus to being ready to take the first measurement. Each question must begin with a scenario describing exactly what has been assembled so far, and ask what to do next.
+
+Curriculum context: {context_line}
+Grade calibration: {grade_note}
+
+{_MOBILE_FORMAT_RULES}
+
+{_SOURCE_INDEPENDENCE_RULES}
+
+{_SETUP_PRACTICAL_RULES}
+
+{_BLOOM_MAPPING}
+
+{_QUESTION_TYPE_RULES}
+
+{_ANSWER_POSITION_RULES}
+
+{_HINT_RULES}
+
+{_EXPLANATION_RULES}
+
+{_SETUP_PRACTICAL_SELF_VERIFICATION}
+
+Output format: return your response as a flat JSON array of question objects. No markdown, no code fences, no plain text."""
+
+
+def build_setup_practical_user_prompt(
+    chapter: str,
+    num_questions: int,
+    context_text: str,
+    existing_question_stems: list[str] | None = None,
+) -> str:
+    dedup_section = ""
+    if existing_question_stems:
+        stems_list = "\n".join(f"  - {s}" for s in existing_question_stems)
+        dedup_section = f"\nAlready-asked questions (do NOT repeat these):\n{stems_list}\n"
+
+    if num_questions <= 4:
+        group_plan = "Generate 1 setup chain group with all questions."
+    elif num_questions <= 7:
+        group_plan = "Generate 2 setup chain groups of 3–4 questions each."
+    else:
+        group_plan = "Generate 3 setup chain groups: (1) Assembling the Apparatus, (2) Preparing to Measure, (3) First Measurement Setup. Distribute questions evenly."
+
+    return f"""Experiment: {chapter}
+Assessment Type: Setup Practical — Chained Sequential Setup Questions
+Number of questions to generate: {num_questions}
+{dedup_section}
+Experiment content (use ONLY the information below to write scenarios and questions):
+---
+{context_text}
+---
+
+{group_plan}
+
+CHAIN RULE — most important instruction:
+  Within each group, each question's scenario MUST state exactly what has been
+  assembled or done in ALL previous questions. Think of it as an assembly log:
+    Q1 scenario: "You are about to set up... You have [list all apparatus]..."
+    Q2 scenario: "You have [Q1 action]. You now need to [next phase]..."
+    Q3 scenario: "You have [Q1 action] and [Q2 action]. What must you [next]?"
+    Q4 scenario: "You have [Q1+Q2+Q3 actions complete]. The setup now has [state]..."
+
+  Use the ACTUAL apparatus names from the experiment content.
+  The student reading Q3 must know exactly what has been set up from Q1 and Q2
+  just by reading Q3's scenario alone.
+
+question_text format (strictly required):
+  "Scenario: [exact current state of the setup — what has been assembled so far]
+
+  [The setup question for this step]"
+
+Question types: mcq_single for most; mcq_multiple for setup verification checks.
+Do NOT use rearrange — the chain handles the sequence.
+Images: exactly 1–2 questions (apparatus layout or partial assembly). All others: null.
+Difficulty: levels 1–3 (setup knowledge and sequencing).
+
+Return all {num_questions} questions as a flat JSON array."""
