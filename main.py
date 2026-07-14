@@ -45,3 +45,18 @@ async def health():
     except Exception:
         pass
     return {"status": "ok", "qdrant_collection_ready": qdrant_ok}
+
+
+@app.get("/version")
+async def version():
+    import subprocess
+    def _git(cmd: list[str]) -> str:
+        try:
+            return subprocess.check_output(cmd, cwd="/app", stderr=subprocess.DEVNULL).decode().strip()
+        except Exception:
+            return "unknown"
+    return {
+        "commit": _git(["git", "rev-parse", "--short", "HEAD"]),
+        "branch": _git(["git", "rev-parse", "--abbrev-ref", "HEAD"]),
+        "message": _git(["git", "log", "-1", "--format=%s"]),
+    }
