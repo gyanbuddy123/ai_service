@@ -19,7 +19,7 @@ from services.prompt_builder import (
 from services.mcq_validator import (
     validate_questions, validate_single, question_hash, build_fix_instruction,
 )
-from services.vector_store import resolve_context, retrieve_full_chapter
+from services.vector_store import resolve_context, retrieve_full_chapter, retrieve_context
 from services.answer_shuffler import shuffle_answer_positions
 
 router = APIRouter()
@@ -161,7 +161,15 @@ async def generate_assessment(req: GenerateRequest):
         )
     elif is_lab_intro:
         logger.info(f"Session {req.session_id}: lab intro mode — aim, formula & theory (grade {req.grade_level})")
-        context_text = await retrieve_full_chapter(chapter_id=req.chapter_id)
+        # Semantic retrieval with theory-focused query — avoids procedure/data chunks
+        context_text = await retrieve_context(
+            chapter_id=req.chapter_id,
+            query=(
+                "introduction aim objective theory law formula spring constant "
+                "mathematical relationship principle definition equation symbol unit"
+            ),
+            top_k=12,
+        )
         if not context_text:
             context_text = req.context_text
         if not context_text:
