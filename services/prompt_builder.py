@@ -1269,3 +1269,181 @@ Images: exactly 1–2 questions across the full set (apparatus setup or graph). 
 Difficulty: levels 2–4.
 
 Return all {num_questions} questions as a flat JSON array."""
+
+
+# ── Introduction to Experiment / Theory-Formula prompts ──────────────────────
+
+_LAB_INTRO_RULES = """
+Introduction to Experiment assessment rules — aim, formulas, and general theory ONLY:
+
+  SCOPE — generate questions from ONLY these three areas:
+
+  1. AIM / PURPOSE / INTRODUCTION (~20–30% of questions)
+     What this experiment is and WHY it is performed:
+       • Which physical law or principle does this experiment verify?
+       • What is the stated aim of this experiment?
+       • What concept or relationship does the experiment demonstrate?
+     Stems: "What is the aim of...", "Which law does this experiment verify?",
+            "Why is this experiment performed?", "What does this experiment demonstrate?"
+
+  2. FORMULAS AND MATHEMATICAL RELATIONSHIPS (~35–45% of questions)
+     Test the key equations of the experiment:
+       • What does each symbol in the formula represent?
+       • What are the SI units of each quantity?
+       • Rearrange the formula to find a given variable
+       • Calculate a value given numerical data (use real values from the experiment content)
+       • Which of these is the correct formula for this experiment?
+       • If [variable] doubles / halves, what happens to [other quantity]?
+     Stems: "In the formula F = kx, what does k represent?",
+            "What are the SI units of the spring constant?",
+            "Calculate the extension when a 200 g mass is hung...",
+            "If the load is tripled and the spring obeys Hooke's Law, the extension..."
+
+  3. GENERAL THEORY / UNDERLYING CONCEPTS (~30–40% of questions)
+     The scientific principle behind the experiment:
+       • State or identify the law being verified
+       • What does the law state? (pick the correct word statement)
+       • What is the physical meaning of the constant / slope / proportionality factor?
+       • Within what conditions or limits does the law hold?
+       • What happens when the law breaks down?
+       • What TYPE of relationship does the law describe (linear, inverse, etc.)?
+     Stems: "Hooke's Law states that...", "The spring constant is a measure of...",
+            "The law is valid only as long as...", "The slope of the F vs x graph represents...",
+            "Beyond the elastic limit, the spring..."
+
+  STRICTLY EXCLUDED — do NOT generate any question on:
+    ✗ Experimental procedure steps (how to set up apparatus, what to do next)
+    ✗ Observation recording or reading a data table
+    ✗ Safety precautions during the experiment
+    ✗ Error analysis or troubleshooting
+    ✗ In-lab scenario framing ("you are performing...", "a student is in the lab...")
+    These belong to the Lab Manual and Lab Practical topics.
+
+  QUESTION TYPES:
+    • mcq_single  : for most questions (factual, formula, and concept)
+    • mcq_multiple: when multiple statements of a law or multiple correct aspects genuinely apply
+                    (e.g., "Which of the following are correct statements of Hooke's Law?")
+    • rearrange   : only for ordering steps in a formula derivation or stating a law in sequence
+                    — write the actual content of each step, NEVER "Step 1", "Step 2"
+
+  IMAGES — set image_prompt on at most 1–2 questions:
+    • A free-body / force diagram illustrating the formula derivation
+    • A graph shape showing the mathematical relationship (e.g., F vs x with slope k marked)
+    • Do NOT use apparatus setup diagrams here — those belong to Lab Manual
+    • All other questions: image_prompt null or omitted
+
+  FORBIDDEN: "the text says", "the manual states", "according to the passage", "refer to page X",
+    "as shown in the table", "as mentioned above"
+"""
+
+_LAB_INTRO_SELF_VERIFICATION = """
+Self-verification for Introduction to Experiment questions (do this before submitting):
+  ✓ Every question tests ONLY aim/purpose, formula understanding, or general theory
+  ✓ NO question asks about procedure steps, safety, in-lab actions, or observations
+  ✓ Formula questions use correct symbols and SI units from the experiment content
+  ✓ Theory questions test understanding of the principle — not just a rote definition
+  ✓ Numerical questions use real values extracted from the experiment content
+  ✓ hint guides the student's conceptual thinking without revealing the answer
+  ✓ explanation states the correct principle, formula, or definition clearly and concisely
+  ✓ At most 1–2 questions have image_prompt set; all others have image_prompt null
+  ✓ No reference to page numbers, text sections, or "the manual says"
+  If any check fails — fix the question before submitting.
+"""
+
+
+def build_lab_intro_system_prompt(
+    grade_level: int, subject: str = "", chapter: str = "", board: str = "CBSE"
+) -> str:
+    if grade_level <= 5:
+        grade_note = "Use concrete, simple language. Short sentences. No jargon."
+    elif grade_level <= 8:
+        grade_note = "Use moderate academic language. Some subject-specific vocabulary is fine."
+    elif grade_level <= 10:
+        grade_note = "Use academic language appropriate for secondary school students."
+    else:
+        grade_note = "Use college-preparatory academic language with full subject terminology."
+
+    parts = [f"Board: {board}", f"Grade: {grade_level}"]
+    if subject:
+        parts.append(f"Subject: {subject}")
+    if chapter:
+        parts.append(f"Chapter/Experiment: {chapter}")
+    context_line = " | ".join(parts)
+
+    return f"""You are an expert science assessment designer specialising in the theoretical and mathematical foundations of laboratory experiments.
+
+Your task is to generate MCQs that test a student's understanding of the introduction, purpose, formulas, and general theory of a science experiment — the conceptual groundwork a student must have before stepping into the lab.
+
+Curriculum context: {context_line}
+Grade calibration: {grade_note}
+
+{_MOBILE_FORMAT_RULES}
+
+{_LAB_INTRO_RULES}
+
+{_BLOOM_MAPPING}
+
+{_DIFFICULTY_DISTRIBUTION_RULES}
+
+{_QUESTION_TYPE_RULES}
+
+{_ANSWER_POSITION_RULES}
+
+{_HINT_RULES}
+
+{_EXPLANATION_RULES}
+
+{_LAB_INTRO_SELF_VERIFICATION}
+
+Output format: return your response as structured JSON matching the provided schema. No markdown, no code fences, no plain text."""
+
+
+def build_lab_intro_user_prompt(
+    chapter: str,
+    num_questions: int,
+    context_text: str,
+    existing_question_stems: list[str] | None = None,
+) -> str:
+    dedup_section = ""
+    if existing_question_stems:
+        stems_list = "\n".join(f"  - {s}" for s in existing_question_stems)
+        dedup_section = f"\nAlready-asked questions (do NOT repeat these):\n{stems_list}\n"
+
+    return f"""Experiment: {chapter}
+Assessment Type: Introduction to Experiment — Aim, Formula & Theory
+Number of questions to generate: {num_questions}
+{dedup_section}
+Experiment content (use ONLY the information below to create questions):
+---
+{context_text}
+---
+
+Generate exactly {num_questions} question(s) covering ONLY these three areas — no procedure, no safety, no in-lab scenarios:
+
+AREA 1 — AIM / PURPOSE (~20–30% of questions):
+  What is this experiment? Which law or principle does it verify? Why is it performed?
+  Example stems: "What is the aim of this experiment?", "Which law does this experiment verify?",
+  "What does this experiment demonstrate?", "Why is this experiment performed?"
+
+AREA 2 — FORMULAS AND MATHEMATICAL RELATIONSHIPS (~35–45% of questions):
+  Key equations: symbol meanings, SI units, rearrangements, calculations using real values.
+  Example stems: "In the formula [formula], what does [symbol] represent?",
+  "What are the SI units of [quantity]?", "Calculate [value] given [data from experiment]",
+  "If [variable] is doubled, what happens to [other quantity]?"
+  Use REAL numerical values from the experiment content where possible.
+
+AREA 3 — GENERAL THEORY / UNDERLYING CONCEPTS (~30–40% of questions):
+  The scientific principle: what the law states, physical meaning of constants, validity limits.
+  Example stems: "[Law name] states that...", "The [constant/slope] represents...",
+  "The law is valid only when...", "Beyond [limit], the [quantity] no longer..."
+
+Question type assignment:
+  • mcq_single for most questions
+  • mcq_multiple when multiple statements or aspects are genuinely correct
+  • rearrange only for ordering formula derivation steps (write actual step content, never "Step 1")
+
+Difficulty: vary from level 1 (recall aim / name the law) up to level 4 (formula manipulation, applying the law to a novel context).
+
+Images: at most 1–2 questions — force/free-body diagrams or graph shape diagrams only.
+
+Return all questions as a JSON array."""
