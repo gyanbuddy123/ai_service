@@ -1477,3 +1477,174 @@ Difficulty: level 1 (recall aim/law) to level 4 (formula manipulation, novel app
 Images: at most 1–2 — force/free-body diagrams or graph shape diagrams only.
 
 Return all questions as a JSON array."""
+
+
+# ── Experiment Setup prompts ──────────────────────────────────────────────────
+
+_LAB_SETUP_RULES = """
+Experiment Setup assessment rules — apparatus and procedure steps ONLY:
+
+  SCOPE — generate questions from ONLY these two areas:
+
+  1. APPARATUS / EQUIPMENT (~40–50% of questions)
+     Questions about the equipment used to set up this experiment:
+       • Identify each piece of apparatus by name
+       • What is the ROLE or PURPOSE of each specific piece of equipment?
+       • Which instrument is used to measure a specific quantity?
+       • What is the correct arrangement or connection of the apparatus?
+       • Which piece of equipment is NOT needed for this experiment?
+     Stems: "Which instrument is used to measure...",
+            "What is the role of [apparatus] in this experiment?",
+            "Which of the following is NOT part of the apparatus for this experiment?",
+            "How should [apparatus] be positioned / connected?"
+
+  2. SETUP PROCEDURE / STEPS (~50–60% of questions)
+     Questions about HOW to set up and take a reading in this experiment:
+       • Rearrange the setup or measurement steps in the correct order
+       • What is done FIRST before starting the experiment?
+       • What must be checked or calibrated before taking measurements?
+       • What is the correct next step at a specific point in the setup?
+     Stems: "Arrange the following setup steps in the correct order.",
+            "What is the first action before adding any [variable]?",
+            "Before starting the experiment, which check must be performed?",
+            "What is the correct order of steps to take one measurement?"
+
+  QUESTION TYPES — IMPORTANT:
+    • rearrange : REQUIRED — use for most procedure/step questions.
+                  Write each step's ACTUAL CONTENT as option_text.
+                  NEVER use "Step 1", "Step 2", "Step A", or any numbered labels.
+                  All options must have is_correct=true with a unique correct_order.
+    • mcq_single : for apparatus identification, role, and single-step questions
+    • mcq_multiple: for "which of these are required apparatus?" (multiple correct items)
+    • Aim for at least 40% rearrange questions across the set
+
+  IMAGES — set image_prompt on exactly 1–2 questions:
+    • Best choice: an apparatus/setup diagram — show the full arrangement with one
+      component unlabelled (marked '?') for the question being asked
+    • Second choice: a partial setup diagram showing the arrangement being asked about
+    • All other questions: image_prompt null or omitted
+
+  STRICTLY EXCLUDED — do NOT generate any question on:
+    ✗ Theory or scientific laws (formulas, equations, proportionality)
+    ✗ Calculations or formula manipulation
+    ✗ Observations, readings, or data recording during the experiment
+    ✗ Data analysis or graph interpretation
+    ✗ Conclusions or error analysis
+    ✗ In-lab scenario framing ("you are performing...", "you notice...")
+    These belong to Introduction to Experiment, Lab Manual, and Lab Practical topics.
+"""
+
+_LAB_SETUP_SELF_VERIFICATION = """
+Self-verification for Experiment Setup questions (do this before submitting):
+  ✓ Every question is about apparatus identification/role OR setup/procedure steps
+  ✓ NO question asks about theory, formulas, calculations, observations, or data
+  ✓ rearrange questions: ALL options have is_correct=true with unique correct_order values
+  ✓ rearrange option_text contains actual step content — NEVER "Step 1", "Step 2" labels
+  ✓ At least 40% of questions are rearrange type
+  ✓ Exactly 1–2 questions have image_prompt set (apparatus diagram); all others null
+  ✓ No reference to "the text says", "the manual states", "according to the passage"
+  If any check fails — fix the question before submitting.
+"""
+
+
+def build_lab_setup_system_prompt(
+    grade_level: int, subject: str = "", chapter: str = "", board: str = "CBSE"
+) -> str:
+    if grade_level <= 5:
+        grade_note = "Use concrete, simple language. Short sentences. No jargon."
+    elif grade_level <= 8:
+        grade_note = "Use moderate academic language. Some subject-specific vocabulary is fine."
+    elif grade_level <= 10:
+        grade_note = "Use academic language appropriate for secondary school students."
+    else:
+        grade_note = "Use college-preparatory academic language with full subject terminology."
+
+    parts = [f"Board: {board}", f"Grade: {grade_level}"]
+    if subject:
+        parts.append(f"Subject: {subject}")
+    if chapter:
+        parts.append(f"Chapter/Experiment: {chapter}")
+    context_line = " | ".join(parts)
+
+    return f"""You are an expert science assessment designer specialising in laboratory apparatus and experimental procedure.
+
+Your task is to generate MCQs that test a student's knowledge of HOW to set up a science experiment — the equipment required, the role of each piece of apparatus, and the correct sequence of setup and measurement steps.
+
+Curriculum context: {context_line}
+Grade calibration: {grade_note}
+
+{_MOBILE_FORMAT_RULES}
+
+{_SOURCE_INDEPENDENCE_RULES}
+
+{_LAB_SETUP_RULES}
+
+{_BLOOM_MAPPING}
+
+{_DIFFICULTY_DISTRIBUTION_RULES}
+
+{_QUESTION_TYPE_RULES}
+
+{_ANSWER_POSITION_RULES}
+
+{_HINT_RULES}
+
+{_EXPLANATION_RULES}
+
+{_LAB_SETUP_SELF_VERIFICATION}
+
+Output format: return your response as structured JSON matching the provided schema. No markdown, no code fences, no plain text."""
+
+
+def build_lab_setup_user_prompt(
+    chapter: str,
+    num_questions: int,
+    context_text: str,
+    existing_question_stems: list[str] | None = None,
+) -> str:
+    dedup_section = ""
+    if existing_question_stems:
+        stems_list = "\n".join(f"  - {s}" for s in existing_question_stems)
+        dedup_section = f"\nAlready-asked questions (do NOT repeat these):\n{stems_list}\n"
+
+    return f"""Experiment: {chapter}
+Assessment Type: Experiment Setup — Apparatus & Procedure Steps
+Number of questions to generate: {num_questions}
+{dedup_section}
+Experiment content (use ONLY the information below to create questions):
+---
+{context_text}
+---
+
+Generate exactly {num_questions} question(s) covering ONLY apparatus knowledge and setup procedure steps.
+Do NOT generate any question about theory, formulas, calculations, observations, or data.
+
+AREA 1 — APPARATUS (~40–50% of questions):
+  Equipment names, roles, and arrangement for this experiment.
+  Example stems:
+    "Which instrument is used to measure [quantity] in this experiment?"
+    "What is the role of [apparatus] in the experimental setup?"
+    "Which of the following is NOT required for this experiment?"
+    "How should [apparatus] be positioned in the setup?"
+
+AREA 2 — SETUP PROCEDURE STEPS (~50–60% of questions):
+  The correct sequence of steps to set up the apparatus and take a measurement.
+  Use rearrange type for most of these — write each step's actual action as option_text.
+  Example stems:
+    "Arrange the following steps to set up the apparatus in the correct order."
+    "Arrange the following actions to take one complete measurement in the correct order."
+    "What is the FIRST step before beginning the experiment?"
+    "Before recording any readings, what must be done?"
+
+Question type assignment:
+  • rearrange for procedure step ordering — at least 40% of total questions
+    → Each option_text must be the actual step content
+       e.g. "Hang the spring from the retort stand", "Attach the slotted mass hanger to the spring"
+    → NEVER write "Step 1", "Step 2", or any numbered label as option_text
+  • mcq_single for apparatus role, identification, and single-step questions
+  • mcq_multiple when multiple apparatus items are all required or correct
+
+Difficulty: level 1 (name the apparatus) to level 3 (correct step sequence, role of specific equipment).
+Images: exactly 1–2 questions — apparatus setup diagram with one component unlabelled ('?').
+
+Return all questions as a JSON array."""
