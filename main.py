@@ -49,10 +49,11 @@ async def health():
 
 @app.get("/version")
 async def version():
-    import subprocess
+    import subprocess, os
+    repo_dir = os.path.dirname(os.path.abspath(__file__))
     def _git(cmd: list[str]) -> str:
         try:
-            return subprocess.check_output(cmd, cwd="/app", stderr=subprocess.DEVNULL).decode().strip()
+            return subprocess.check_output(cmd, cwd=repo_dir, stderr=subprocess.DEVNULL).decode().strip()
         except Exception:
             return "unknown"
     return {
