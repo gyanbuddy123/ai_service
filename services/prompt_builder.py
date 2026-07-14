@@ -1853,3 +1853,130 @@ Images: exactly 1–2 questions (apparatus layout or partial assembly). All othe
 Difficulty: levels 1–3 (setup knowledge and sequencing).
 
 Return all {num_questions} questions as a flat JSON array."""
+
+
+# ── Lab Observation ───────────────────────────────────────────────────────────
+
+_LAB_OBSERVATION_RULES = """
+Lab Observation assessment rules — questions about what happens DURING and AFTER
+experiment actions (prediction, observation, cause-and-effect, reading patterns):
+
+SCOPE — questions must come from ONE of these four categories:
+
+  1. PREDICTION (~30–35%)
+     Student has NOT yet taken a reading. Ask what they EXPECT to observe.
+     Stem starters:
+       "What will you observe when…"
+       "What do you expect to happen if…"
+       "A student is about to add the next mass. What should they expect to see?"
+
+  2. OBSERVATION / READING (~30–35%)
+     Something has already been observed or recorded. Ask what it means or what
+     value the student should note.
+     Stem starters:
+       "A student observes the pointer has moved from 0 to 3.1 cm after adding mass.
+        What did the student measure?"
+       "What does the student notice when the mass is removed?"
+       "A student records the following readings: … What is the extension for load X?"
+
+  3. CAUSE-AND-EFFECT / WHY (~20–25%)
+     Ask WHY a specific observable event occurs.
+     Stem starters:
+       "Why does the spring extend more when heavier masses are added?"
+       "Why must the student wait for the spring to stop oscillating before recording?"
+       "Why does the pointer return to zero when the mass is removed?"
+
+  4. PATTERN / RELATIONSHIP (~10–15%)
+     Ask about a trend or relationship across multiple readings.
+     Stem starters:
+       "As the load doubles, what happens to the extension?"
+       "What shape does a load-vs-extension graph produce and what does it indicate?"
+
+QUESTION TYPES: mcq_single (majority), mcq_multiple only for multi-observation checks.
+Do NOT use rearrange.
+
+Each question MUST be tied to a specific, observable event in the experiment:
+  GOOD: "when you add the third mass…", "after recording the reading at 200g…",
+        "a student notices the pointer moved…"
+  BAD:  "Define Hooke's Law", "State the formula for spring constant",
+        "List the apparatus needed"
+
+STRICTLY EXCLUDED — these question types are FORBIDDEN:
+  ✗ Setup or assembly questions (what apparatus to use, how to arrange equipment)
+  ✗ Procedure step ordering (that belongs in Experiment Setup)
+  ✗ Theory definitions or formula derivations (that belongs in Introduction to experiment)
+  ✗ Chained apparatus assembly scenarios (that belongs in Setup Practical)
+  ✗ Any question not anchored to an observable or measurable event
+
+Images: 1–2 questions may include an image (spring-extension diagram or a reading table).
+Difficulty: levels 2–4 (observation, reasoning, and interpretation).
+"""
+
+
+def build_lab_observation_system_prompt(
+    grade_level: int,
+    subject: str,
+    chapter: str,
+    board: str,
+) -> str:
+    return f"""You are an expert science assessment generator specialising in
+school laboratory experiments for {board} Class {grade_level} {subject}.
+
+Your task is to create observation-phase MCQ questions for the experiment
+"{chapter}". These questions test whether the student can PREDICT what will
+happen, INTERPRET what they observe, understand CAUSE-AND-EFFECT behind
+readings, and recognise PATTERNS across results.
+
+The setup is already complete — the student is now performing the experiment
+and making observations. Every question must be grounded in a concrete,
+observable event (adding mass, watching the pointer, recording a reading,
+noticing the spring's behaviour).
+
+{_MOBILE_FORMAT_RULES}
+{_SOURCE_INDEPENDENCE_RULES}
+{_LAB_OBSERVATION_RULES}
+"""
+
+
+def build_lab_observation_user_prompt(
+    chapter: str,
+    num_questions: int,
+    context_text: str,
+    board: str = "CBSE",
+    grade_level: int = 8,
+    existing_question_stems: list[str] | None = None,
+) -> str:
+    avoid_block = ""
+    if existing_question_stems:
+        stems = "\n".join(f"  - {s}" for s in existing_question_stems)
+        avoid_block = f"""
+Already-used question stems (do NOT reuse or closely paraphrase these):
+{stems}
+"""
+
+    return f"""Experiment: {chapter}
+Assessment Type: Lab Observation — prediction, observation, cause-and-effect, patterns
+Board: {board} | Grade: {grade_level}
+{avoid_block}
+Experiment reference content:
+\"\"\"
+{context_text}
+\"\"\"
+
+Generate exactly {num_questions} observation-phase MCQ questions about the experiment
+"{chapter}" for {board} Class {grade_level} students.
+
+Distribute questions across the four categories:
+  • Prediction (~30–35%) — what will happen when an action is performed
+  • Observation / Reading (~30–35%) — what a specific reading or observation means
+  • Cause-and-effect / Why (~20–25%) — why a particular observation occurs
+  • Pattern / Relationship (~10–15%) — trends across multiple readings
+
+Every question must refer to a SPECIFIC, OBSERVABLE EVENT — adding a mass, reading
+the pointer, removing a mass, watching the spring, comparing two readings, plotting
+values. No pure-theory or definition questions.
+
+Use actual apparatus names and any sample readings from the reference content to
+make the questions concrete and realistic.
+
+Return all {num_questions} questions as a flat JSON array."""

@@ -17,6 +17,7 @@ from services.prompt_builder import (
     build_lab_intro_system_prompt, build_lab_intro_user_prompt,
     build_lab_setup_system_prompt, build_lab_setup_user_prompt,
     build_setup_practical_system_prompt, build_setup_practical_user_prompt,
+    build_lab_observation_system_prompt, build_lab_observation_user_prompt,
 )
 from services.mcq_validator import (
     validate_questions, validate_single, question_hash, build_fix_instruction,
@@ -36,6 +37,7 @@ LAB_PRACTICAL_TOPIC = "Lab Practical"
 LAB_INTRO_TOPIC = "Introduction to experiment"
 LAB_SETUP_TOPIC = "Experiment Setup"
 SETUP_PRACTICAL_TOPIC = "Setup Practical"
+LAB_OBSERVATION_TOPIC = "Lab Observation"
 
 
 @router.post("/ai/generate", response_model=GenerateResponse)
@@ -51,6 +53,7 @@ async def generate_assessment(req: GenerateRequest):
     is_lab_intro = req.topic.strip().lower() == LAB_INTRO_TOPIC.lower()
     is_lab_setup = req.topic.strip().lower() == LAB_SETUP_TOPIC.lower()
     is_setup_practical = req.topic.strip().lower() == SETUP_PRACTICAL_TOPIC.lower()
+    is_lab_observation = req.topic.strip().lower() == LAB_OBSERVATION_TOPIC.lower()
 
     if is_grammar:
         logger.info(f"Session {req.session_id}: English grammar mode (grade {req.grade_level})")
@@ -207,6 +210,30 @@ async def generate_assessment(req: GenerateRequest):
             chapter=req.chapter,
             num_questions=req.num_questions + _buffer,
             context_text=context_text,
+            existing_question_stems=req.existing_question_stems or None,
+        )
+    elif is_lab_observation:
+        logger.info(f"Session {req.session_id}: lab observation mode — prediction, observation & cause-effect (grade {req.grade_level})")
+        context_text = await retrieve_full_chapter(chapter_id=req.chapter_id)
+        if not context_text:
+            context_text = req.context_text
+        if not context_text:
+            raise HTTPException(
+                status_code=422,
+                detail="No context available. Upload the lab manual PDF for this experiment first.",
+            )
+        system_prompt = build_lab_observation_system_prompt(
+            grade_level=req.grade_level,
+            subject=req.subject,
+            chapter=req.chapter,
+            board=req.board,
+        )
+        user_prompt = build_lab_observation_user_prompt(
+            chapter=req.chapter,
+            num_questions=req.num_questions + _buffer,
+            context_text=context_text,
+            board=req.board,
+            grade_level=req.grade_level,
             existing_question_stems=req.existing_question_stems or None,
         )
     elif is_lab_intro:
