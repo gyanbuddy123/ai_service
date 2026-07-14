@@ -19,7 +19,7 @@ from services.prompt_builder import (
 from services.mcq_validator import (
     validate_questions, validate_single, question_hash, build_fix_instruction,
 )
-from services.vector_store import resolve_context, retrieve_full_chapter, retrieve_context
+from services.vector_store import resolve_context, retrieve_full_chapter
 from services.answer_shuffler import shuffle_answer_positions
 
 router = APIRouter()
@@ -160,23 +160,9 @@ async def generate_assessment(req: GenerateRequest):
             existing_question_stems=req.existing_question_stems or None,
         )
     elif is_lab_intro:
-        logger.info(f"Session {req.session_id}: lab intro mode — aim, formula & theory (grade {req.grade_level})")
-        # Semantic retrieval with theory-focused query — avoids procedure/data chunks
-        context_text = await retrieve_context(
-            chapter_id=req.chapter_id,
-            query=(
-                "introduction aim objective theory law formula spring constant "
-                "mathematical relationship principle definition equation symbol unit"
-            ),
-            top_k=12,
-        )
-        if not context_text:
-            context_text = req.context_text
-        if not context_text:
-            raise HTTPException(
-                status_code=422,
-                detail="No context available. Upload the lab manual PDF for this experiment first.",
-            )
+        # No PDF retrieval — intro/theory/formula is standard curriculum content the AI knows.
+        # Providing the PDF injects procedure/data chunks that cause wrong question types.
+        logger.info(f"Session {req.session_id}: lab intro mode — aim, formula & theory from curriculum knowledge (grade {req.grade_level})")
         system_prompt = build_lab_intro_system_prompt(
             grade_level=req.grade_level,
             subject=req.subject,
@@ -186,7 +172,8 @@ async def generate_assessment(req: GenerateRequest):
         user_prompt = build_lab_intro_user_prompt(
             chapter=req.chapter,
             num_questions=req.num_questions + _buffer,
-            context_text=context_text,
+            board=req.board,
+            grade_level=req.grade_level,
             existing_question_stems=req.existing_question_stems or None,
         )
     else:

@@ -1426,7 +1426,8 @@ Output format: return your response as structured JSON matching the provided sch
 def build_lab_intro_user_prompt(
     chapter: str,
     num_questions: int,
-    context_text: str,
+    board: str = "CBSE",
+    grade_level: int = 8,
     existing_question_stems: list[str] | None = None,
 ) -> str:
     dedup_section = ""
@@ -1436,21 +1437,11 @@ def build_lab_intro_user_prompt(
 
     return f"""Experiment: {chapter}
 Assessment Type: Introduction to Experiment — Aim, Formula & Theory
+Board: {board} | Grade: {grade_level}
 Number of questions to generate: {num_questions}
 {dedup_section}
-Experiment content (use ONLY the information below to create questions):
----
-{context_text}
----
-
-HARD STOP — the PDF content below contains procedure steps, data tables, and observation sections.
-You MUST IGNORE all of that. Do NOT generate any question about:
-  ✗ Procedure steps ("What is the first step...", "Arrange the steps in order...", "What should you do next...")
-  ✗ Observations or recorded data ("What value did the student record?", "What does the data show?")
-  ✗ Data analysis goals ("What is the primary goal when analyzing data?")
-  ✗ Safety precautions
-  ✗ In-lab actions or scenarios ("While performing...", "You are in the lab...")
-  ✗ Generic scientific method ("Why is it important to change only one variable?")
+Use your knowledge of the {board} Class {grade_level} science curriculum to generate questions
+about the introduction, formulas, and general theory of this experiment: "{chapter}".
 
 Generate exactly {num_questions} question(s) from ONLY these three areas:
 
@@ -1460,24 +1451,27 @@ AREA 1 — AIM / PURPOSE (~20–30% of questions):
   "What does this experiment demonstrate?", "Why is this experiment performed?"
 
 AREA 2 — FORMULAS AND MATHEMATICAL RELATIONSHIPS (~35–45% of questions):
-  Key equations: symbol meanings, SI units, rearrangements, calculations using real values.
+  Key equations of this experiment: symbol meanings, SI units, rearrangements, calculations.
   Example stems: "In the formula [formula], what does [symbol] represent?",
-  "What are the SI units of [quantity]?", "Calculate [value] given [data from experiment]",
-  "If [variable] is doubled, what happens to [other quantity]?"
-  Use REAL numerical values from the experiment content where possible.
+  "What are the SI units of [quantity]?", "If [variable] is doubled, what happens to [quantity]?",
+  "Calculate [value] given [data]."
 
 AREA 3 — GENERAL THEORY / UNDERLYING CONCEPTS (~30–40% of questions):
-  The scientific principle: what the law states, physical meaning of constants, validity limits.
-  Example stems: "[Law name] states that...", "The [constant/slope] represents...",
-  "The law is valid only when...", "Beyond [limit], the [quantity] no longer..."
+  The scientific principle governing this experiment: what the law states, physical meaning
+  of constants, type of relationship, validity limits, what happens when the law breaks down.
+  Example stems: "[Law name] states that...", "The [constant] represents...",
+  "The law holds only when...", "The slope of the [graph] represents..."
 
-Question type assignment:
-  • mcq_single for most questions
-  • mcq_multiple when multiple statements or aspects are genuinely correct
-  • rearrange ONLY for ordering formula derivation steps — NEVER for procedure steps
+DO NOT generate any question about:
+  ✗ Procedure steps or experimental actions
+  ✗ Observations, recorded data, or data tables
+  ✗ Safety precautions
+  ✗ In-lab scenarios
+  ✗ Generic scientific method rules
 
-Difficulty: vary from level 1 (recall aim / name the law) up to level 4 (formula manipulation, applying the law to a novel context).
-
-Images: at most 1–2 questions — force/free-body diagrams or graph shape diagrams only.
+Question types: mcq_single for most; mcq_multiple when multiple aspects are genuinely correct;
+rearrange ONLY for formula derivation steps (never for procedure steps).
+Difficulty: level 1 (recall aim/law) to level 4 (formula manipulation, novel application).
+Images: at most 1–2 — force/free-body diagrams or graph shape diagrams only.
 
 Return all questions as a JSON array."""
