@@ -890,6 +890,8 @@ Lab manual image rules — MANDATORY (not optional like general questions):
     • White background, clean educational diagram style
     • For science experiments: use clear line-art style with component labels
 """
+
+_LAB_MANUAL_RULES = """
 Lab manual assessment rules — this is a science experiment assessment:
 
   CORE PRINCIPLE: At least 50% of questions MUST use IN-LAB SCENARIO framing — put the student
