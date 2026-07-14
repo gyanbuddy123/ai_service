@@ -1276,6 +1276,16 @@ Return all {num_questions} questions as a flat JSON array."""
 _LAB_INTRO_RULES = """
 Introduction to Experiment assessment rules — aim, formulas, and general theory ONLY:
 
+  ══════════════════════════════════════════════════════════════════════
+  HARD BOUNDARY — READ THIS FIRST:
+  This topic covers ONLY the pre-lab knowledge: introduction, formulas,
+  and scientific theory. It does NOT cover anything that happens during
+  the experiment (procedure, steps, observations, data, safety, errors).
+  If a question is about WHAT TO DO in the lab → reject it.
+  If a question is about WHAT YOU OBSERVED or RECORDED → reject it.
+  If a question asks to ARRANGE PROCEDURE STEPS → reject it.
+  ══════════════════════════════════════════════════════════════════════
+
   SCOPE — generate questions from ONLY these three areas:
 
   1. AIM / PURPOSE / INTRODUCTION (~20–30% of questions)
@@ -1311,42 +1321,55 @@ Introduction to Experiment assessment rules — aim, formulas, and general theor
             "The law is valid only as long as...", "The slope of the F vs x graph represents...",
             "Beyond the elastic limit, the spring..."
 
-  STRICTLY EXCLUDED — do NOT generate any question on:
-    ✗ Experimental procedure steps (how to set up apparatus, what to do next)
-    ✗ Observation recording or reading a data table
-    ✗ Safety precautions during the experiment
-    ✗ Error analysis or troubleshooting
-    ✗ In-lab scenario framing ("you are performing...", "a student is in the lab...")
+  STRICTLY EXCLUDED — these question types are FORBIDDEN in this topic:
+    ✗ Any question about experimental procedure steps
+        BAD: "What is the first step in the procedure?"
+        BAD: "Arrange the procedure steps in the correct order."
+        BAD: "What should you do after adding the mass?"
+    ✗ Any question about recording observations or reading data
+        BAD: "What is the primary goal when analyzing the data?"
+        BAD: "What value did the student record?"
+    ✗ Any question about safety precautions
+    ✗ Any question about error analysis or troubleshooting
+    ✗ Any question using in-lab scenario framing ("you are performing...", "a student is in the lab...")
+    ✗ Generic scientific method questions not specific to this experiment's theory
+        BAD: "Why is it important to change only one variable at a time?"
     These belong to the Lab Manual and Lab Practical topics.
 
   QUESTION TYPES:
     • mcq_single  : for most questions (factual, formula, and concept)
     • mcq_multiple: when multiple statements of a law or multiple correct aspects genuinely apply
                     (e.g., "Which of the following are correct statements of Hooke's Law?")
-    • rearrange   : only for ordering steps in a formula derivation or stating a law in sequence
+    • rearrange   : ONLY for ordering steps in a formula derivation
                     — write the actual content of each step, NEVER "Step 1", "Step 2"
+                    — NEVER use rearrange for procedure steps
 
   IMAGES — set image_prompt on at most 1–2 questions:
     • A free-body / force diagram illustrating the formula derivation
     • A graph shape showing the mathematical relationship (e.g., F vs x with slope k marked)
     • Do NOT use apparatus setup diagrams here — those belong to Lab Manual
     • All other questions: image_prompt null or omitted
-
-  FORBIDDEN: "the text says", "the manual states", "according to the passage", "refer to page X",
-    "as shown in the table", "as mentioned above"
 """
 
 _LAB_INTRO_SELF_VERIFICATION = """
 Self-verification for Introduction to Experiment questions (do this before submitting):
-  ✓ Every question tests ONLY aim/purpose, formula understanding, or general theory
-  ✓ NO question asks about procedure steps, safety, in-lab actions, or observations
+  SCOPE CHECK — reject and rewrite any question that fails these:
+  ✗ Does the question ask about a procedure step or what to do in the lab? → REWRITE as theory/formula
+  ✗ Does the question ask about recording observations, data analysis, or graph results? → REWRITE
+  ✗ Does the question use in-lab scenario framing ("you are performing...", "a student notices...")? → REWRITE
+  ✗ Is the question about a generic scientific method rule (e.g., "change one variable")? → REWRITE
+  ✗ Does the question ask to arrange/order procedure steps? → DELETE (rearrange is for formula derivation only)
+
+  QUALITY CHECK — verify each accepted question:
+  ✓ Tests ONLY: aim/purpose, formula symbol/unit/calculation, or scientific theory/law
   ✓ Formula questions use correct symbols and SI units from the experiment content
-  ✓ Theory questions test understanding of the principle — not just a rote definition
+  ✓ Theory questions test conceptual understanding — not just rote definition recall
   ✓ Numerical questions use real values extracted from the experiment content
+  ✓ question_text, hint, and explanation contain NO reference to "the text", "the manual",
+    "the passage", "according to the text", "the text explicitly states", "as mentioned above"
   ✓ hint guides the student's conceptual thinking without revealing the answer
-  ✓ explanation states the correct principle, formula, or definition clearly and concisely
+  ✓ explanation states the correct principle, formula, or definition clearly and concisely (≤300 chars)
   ✓ At most 1–2 questions have image_prompt set; all others have image_prompt null
-  ✓ No reference to page numbers, text sections, or "the manual says"
   If any check fails — fix the question before submitting.
 """
 
@@ -1378,6 +1401,8 @@ Curriculum context: {context_line}
 Grade calibration: {grade_note}
 
 {_MOBILE_FORMAT_RULES}
+
+{_SOURCE_INDEPENDENCE_RULES}
 
 {_LAB_INTRO_RULES}
 
@@ -1418,7 +1443,16 @@ Experiment content (use ONLY the information below to create questions):
 {context_text}
 ---
 
-Generate exactly {num_questions} question(s) covering ONLY these three areas — no procedure, no safety, no in-lab scenarios:
+HARD STOP — the PDF content below contains procedure steps, data tables, and observation sections.
+You MUST IGNORE all of that. Do NOT generate any question about:
+  ✗ Procedure steps ("What is the first step...", "Arrange the steps in order...", "What should you do next...")
+  ✗ Observations or recorded data ("What value did the student record?", "What does the data show?")
+  ✗ Data analysis goals ("What is the primary goal when analyzing data?")
+  ✗ Safety precautions
+  ✗ In-lab actions or scenarios ("While performing...", "You are in the lab...")
+  ✗ Generic scientific method ("Why is it important to change only one variable?")
+
+Generate exactly {num_questions} question(s) from ONLY these three areas:
 
 AREA 1 — AIM / PURPOSE (~20–30% of questions):
   What is this experiment? Which law or principle does it verify? Why is it performed?
@@ -1440,7 +1474,7 @@ AREA 3 — GENERAL THEORY / UNDERLYING CONCEPTS (~30–40% of questions):
 Question type assignment:
   • mcq_single for most questions
   • mcq_multiple when multiple statements or aspects are genuinely correct
-  • rearrange only for ordering formula derivation steps (write actual step content, never "Step 1")
+  • rearrange ONLY for ordering formula derivation steps — NEVER for procedure steps
 
 Difficulty: vary from level 1 (recall aim / name the law) up to level 4 (formula manipulation, applying the law to a novel context).
 
