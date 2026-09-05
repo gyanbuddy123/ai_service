@@ -12,6 +12,7 @@ persistence logic.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -156,12 +157,19 @@ async def extract_hierarchy(job_id: str, gcs_path: str, subject_name: str) -> di
     it to GCS, so the Import Excel "Icon" column concept (Module.logo_url) can
     be populated automatically instead of left blank.
 
-    Returns {"job_id": ..., "files": [{"filename", "module_chapter_pairs", "icon_url", "skipped", "skip_reason"}, ...]}
+    Each file result also carries pdf_gcs_path + pdf_sha256 so Django can
+    register the same PDF as a RAG source (PdfReference) without the teacher
+    having to upload it a second time via the per-chapter upload button.
+
+    Returns {"job_id": ..., "files": [{"filename", "module_chapter_pairs", "icon_url",
+             "pdf_gcs_path", "pdf_sha256", "skipped", "skip_reason"}, ...]}
     """
+    from config import settings
     from services.pdf_processor import download_from_gcs
 
     raw_bytes = download_from_gcs(gcs_path)
     original_filename = gcs_path.rsplit("/", 1)[-1]
+    is_zip = original_filename.lower().endswith(".zip")
 
     results = []
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -176,6 +184,7 @@ async def extract_hierarchy(job_id: str, gcs_path: str, subject_name: str) -> di
             if len(text.strip()) < _MIN_TEXT_CHARS:
                 results.append({
                     "filename": fname, "module_chapter_pairs": [], "icon_url": None,
+                    "pdf_gcs_path": None, "pdf_sha256": None,
                     "skipped": True, "skip_reason": "No extractable text (likely scanned/image-only).",
                 })
                 continue
@@ -183,21 +192,55 @@ async def extract_hierarchy(job_id: str, gcs_path: str, subject_name: str) -> di
             pairs = await _process_text_with_openai(text, fname)
 
             icon_url = None
+            pdf_gcs_path = None
+            pdf_sha256 = None
             if pairs:
                 module_name = (pairs[0].get("MODULE") or "").strip()
                 if module_name:
                     icon_url = await _generate_module_icon(subject_name, module_name, fname)
+                pdf_gcs_path, pdf_sha256 = _persist_pdf_for_reuse(
+                    pdf_path, fname, job_id, gcs_path, is_zip, settings.gcs_bucket_name,
+                )
 
             results.append({
                 "filename": fname,
                 "module_chapter_pairs": pairs,
                 "icon_url": icon_url,
+                "pdf_gcs_path": pdf_gcs_path,
+                "pdf_sha256": pdf_sha256,
                 "skipped": len(pairs) == 0,
                 "skip_reason": None if pairs else "AI extraction returned no results after retries.",
             })
 
     logger.info(f"extract_hierarchy: job {job_id} ({subject_name}) — {len(results)} file(s) processed")
     return {"job_id": job_id, "files": results}
+
+
+def _persist_pdf_for_reuse(pdf_path, fname, job_id, source_gcs_path, is_zip, bucket_name):
+    """
+    Make one PDF individually addressable in GCS so it can be reused as a RAG
+    source, and hash it for PdfReference's dedup check.
+
+    A single-PDF upload already sits at its own GCS path, so only ZIP entries
+    need uploading. Returns (gs:// path, sha256) or (None, None) on failure —
+    never raises, since a reuse failure must not abort hierarchy extraction.
+    """
+    from services.pdf_processor import upload_bytes_to_gcs
+
+    try:
+        with open(pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+        sha256 = hashlib.sha256(pdf_bytes).hexdigest()
+
+        if not is_zip:
+            return source_gcs_path, sha256
+
+        destination = f"hierarchy_imports/{job_id}/pdfs/{fname}"
+        upload_bytes_to_gcs(pdf_bytes, bucket_name, destination, content_type="application/pdf")
+        return f"gs://{bucket_name}/{destination}", sha256
+    except Exception as exc:
+        logger.warning(f"Could not persist '{fname}' for RAG reuse: {exc}")
+        return None, None
 
 
 # ── Icon generation ──────────────────────────────────────────────────────────
