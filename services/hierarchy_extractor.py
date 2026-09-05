@@ -164,56 +164,86 @@ async def extract_hierarchy(job_id: str, gcs_path: str, subject_name: str) -> di
     Returns {"job_id": ..., "files": [{"filename", "module_chapter_pairs", "icon_url",
              "pdf_gcs_path", "pdf_sha256", "skipped", "skip_reason"}, ...]}
     """
+    import time
+
     from config import settings
     from services.pdf_processor import download_from_gcs
 
+    started = time.monotonic()
     raw_bytes = download_from_gcs(gcs_path)
     original_filename = gcs_path.rsplit("/", 1)[-1]
     is_zip = original_filename.lower().endswith(".zip")
 
-    results = []
     with tempfile.TemporaryDirectory() as temp_dir:
         pdf_paths = _build_disk_queue_from_bytes(raw_bytes, original_filename, temp_dir)
         if not pdf_paths:
             raise ValueError("No PDF files found in the uploaded file.")
 
-        for pdf_path in pdf_paths:
-            fname = os.path.basename(pdf_path)
-            text = _extract_text_from_pdf(pdf_path)
+        # Files are processed concurrently — nearly all of the per-file cost is
+        # waiting on OpenAI, so a ZIP of N chapters takes about as long as its
+        # slowest file rather than the sum of all of them. The semaphore keeps
+        # that from turning into an OpenAI rate-limit burst or N simultaneous
+        # rembg inferences on a small VM.
+        semaphore = asyncio.Semaphore(settings.hierarchy_max_concurrent_files)
+        results = await asyncio.gather(*[
+            _process_one_pdf(
+                pdf_path, semaphore, job_id, gcs_path, is_zip,
+                subject_name, settings.gcs_bucket_name,
+            )
+            for pdf_path in pdf_paths
+        ])
 
-            if len(text.strip()) < _MIN_TEXT_CHARS:
-                results.append({
-                    "filename": fname, "module_chapter_pairs": [], "icon_url": None,
-                    "pdf_gcs_path": None, "pdf_sha256": None,
-                    "skipped": True, "skip_reason": "No extractable text (likely scanned/image-only).",
-                })
-                continue
-
-            pairs = await _process_text_with_openai(text, fname)
-
-            icon_url = None
-            pdf_gcs_path = None
-            pdf_sha256 = None
-            if pairs:
-                module_name = (pairs[0].get("MODULE") or "").strip()
-                if module_name:
-                    icon_url = await _generate_module_icon(subject_name, module_name, fname)
-                pdf_gcs_path, pdf_sha256 = _persist_pdf_for_reuse(
-                    pdf_path, fname, job_id, gcs_path, is_zip, settings.gcs_bucket_name,
-                )
-
-            results.append({
-                "filename": fname,
-                "module_chapter_pairs": pairs,
-                "icon_url": icon_url,
-                "pdf_gcs_path": pdf_gcs_path,
-                "pdf_sha256": pdf_sha256,
-                "skipped": len(pairs) == 0,
-                "skip_reason": None if pairs else "AI extraction returned no results after retries.",
-            })
-
-    logger.info(f"extract_hierarchy: job {job_id} ({subject_name}) — {len(results)} file(s) processed")
+    elapsed = time.monotonic() - started
+    logger.info(
+        f"extract_hierarchy: job {job_id} ({subject_name}) — "
+        f"{len(results)} file(s) in {elapsed:.1f}s "
+        f"(concurrency={settings.hierarchy_max_concurrent_files})"
+    )
     return {"job_id": job_id, "files": results}
+
+
+async def _process_one_pdf(pdf_path, semaphore, job_id, source_gcs_path, is_zip, subject_name, bucket_name):
+    """
+    Full per-file pipeline: text -> hierarchy -> icon -> persist for RAG reuse.
+    Blocking work (PyMuPDF parsing, GCS upload) is pushed to the executor so it
+    doesn't stall the event loop and serialise the other files.
+    """
+    loop = asyncio.get_event_loop()
+    fname = os.path.basename(pdf_path)
+
+    async with semaphore:
+        text = await loop.run_in_executor(None, _extract_text_from_pdf, pdf_path)
+
+        if len(text.strip()) < _MIN_TEXT_CHARS:
+            return {
+                "filename": fname, "module_chapter_pairs": [], "icon_url": None,
+                "pdf_gcs_path": None, "pdf_sha256": None,
+                "skipped": True, "skip_reason": "No extractable text (likely scanned/image-only).",
+            }
+
+        pairs = await _process_text_with_openai(text, fname)
+
+        icon_url = None
+        pdf_gcs_path = None
+        pdf_sha256 = None
+        if pairs:
+            module_name = (pairs[0].get("MODULE") or "").strip()
+            if module_name:
+                icon_url = await _generate_module_icon(subject_name, module_name, fname)
+            pdf_gcs_path, pdf_sha256 = await loop.run_in_executor(
+                None, _persist_pdf_for_reuse,
+                pdf_path, fname, job_id, source_gcs_path, is_zip, bucket_name,
+            )
+
+        return {
+            "filename": fname,
+            "module_chapter_pairs": pairs,
+            "icon_url": icon_url,
+            "pdf_gcs_path": pdf_gcs_path,
+            "pdf_sha256": pdf_sha256,
+            "skipped": len(pairs) == 0,
+            "skip_reason": None if pairs else "AI extraction returned no results after retries.",
+        }
 
 
 def _persist_pdf_for_reuse(pdf_path, fname, job_id, source_gcs_path, is_zip, bucket_name):

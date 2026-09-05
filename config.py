@@ -41,5 +41,9 @@ class Settings(BaseSettings):
     openai_hierarchy_model: str = "gpt-4o-mini"
     openai_icon_model: str = "gpt-image-2"
     gcs_bucket_name: str = "gyaanbuddy-media"
+    # How many PDFs from one upload are processed at once. Higher = faster for
+    # multi-chapter ZIPs, but risks OpenAI rate limits and concurrent rembg
+    # inferences competing for CPU/memory on a small VM.
+    hierarchy_max_concurrent_files: int = 3
 
 settings = Settings()
