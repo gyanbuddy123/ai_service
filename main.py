@@ -2,7 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from routers import generate, modify, embed
+from routers import generate, modify, embed, hierarchy
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,6 +33,7 @@ app = FastAPI(
 app.include_router(generate.router)
 app.include_router(modify.router)
 app.include_router(embed.router)
+app.include_router(hierarchy.router)
 
 
 @app.get("/health")

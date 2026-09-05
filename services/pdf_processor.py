@@ -54,6 +54,23 @@ def download_from_gcs(gcs_path: str) -> bytes:
     return blob.download_as_bytes()
 
 
+def upload_bytes_to_gcs(data: bytes, bucket_name: str, destination_path: str, content_type: str = "application/octet-stream") -> str:
+    """
+    Upload bytes to Google Cloud Storage and return the public
+    https://storage.googleapis.com/... URL. Uses Application Default
+    Credentials (GOOGLE_APPLICATION_CREDENTIALS env var).
+    """
+    from google.cloud import storage
+
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(destination_path)
+    blob.upload_from_string(data, content_type=content_type)
+
+    logger.info(f"Uploaded to gs://{bucket_name}/{destination_path}")
+    return f"https://storage.googleapis.com/{bucket_name}/{destination_path}"
+
+
 def _table_to_markdown(table) -> str:
     """Convert a PyMuPDF Table object to a Markdown table string."""
     try:
