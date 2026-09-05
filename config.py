@@ -1,7 +1,17 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # NOTE: this was previously a module-level `class Config`, which pydantic
+    # never saw — so .env was silently ignored and every value had to come from
+    # exported shell env vars. Real environment variables still take precedence
+    # over .env, so existing exports keep working unchanged.
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
     # GCP
     google_cloud_project: str = ""
     google_cloud_location_gemini: str = "asia-southeast1"
@@ -31,11 +41,5 @@ class Settings(BaseSettings):
     openai_hierarchy_model: str = "gpt-4o-mini"
     openai_icon_model: str = "gpt-image-2"
     gcs_bucket_name: str = "gyaanbuddy-media"
-
-class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
-
 
 settings = Settings()
