@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     # Retrieval
     retrieve_top_k: int = 5  # final number of chunks returned from hybrid search
 
+    # Chapter hierarchy extraction ("Create Chapter with PDF")
+    openai_api_key: str = ""
+    openai_hierarchy_model: str = "gpt-4o-mini"
+    openai_icon_model: str = "gpt-image-2"
+    gcs_bucket_name: str = "gyaanbuddy-media"
+
 class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
