@@ -435,22 +435,43 @@ def _generate_icon_prompt_sync(client, model: str, subject: str, chapter: str, f
     return prompt_match.group(1).strip().strip('"').strip("'") if prompt_match else output_text.strip()
 
 
-def _render_and_strip_background_sync(client, model: str, prompt_text: str) -> bytes:
-    """Renders the icon via OpenAI image generation, then removes its background. Returns PNG bytes."""
+def _render_image_sync(client, model: str, prompt_text: str) -> bytes:
+    """Renders the icon via OpenAI image generation. Network-bound — safe to run concurrently."""
     import base64
+
+    response = client.images.generate(model=model, prompt=prompt_text, n=1, size="1024x1024")
+    return base64.b64decode(response.data[0].b64_json)
+
+
+def _strip_background_sync(image_bytes: bytes) -> bytes:
+    """
+    Removes the icon's background via rembg. CPU-bound — onnxruntime inference,
+    NOT network wait. Callers must serialise this (see _rembg_gate): running
+    several at once saturates every core, and because this service shares a VM
+    with nginx/gunicorn/celery/postgres, that takes the whole site down.
+    """
     from io import BytesIO
 
     from PIL import Image
     from rembg import remove
 
-    response = client.images.generate(model=model, prompt=prompt_text, n=1, size="1024x1024")
-    image_bytes = base64.b64decode(response.data[0].b64_json)
     raw_image = Image.open(BytesIO(image_bytes))
-
     transparent_icon = remove(raw_image)
     out = BytesIO()
     transparent_icon.save(out, format="PNG")
     return out.getvalue()
+
+
+_rembg_semaphore = None
+
+
+def _rembg_gate():
+    """Lazily-created semaphore so background removal never runs more than one
+    at a time, regardless of how many files are being processed concurrently."""
+    global _rembg_semaphore
+    if _rembg_semaphore is None:
+        _rembg_semaphore = asyncio.Semaphore(1)
+    return _rembg_semaphore
 
 
 async def _generate_module_icon(subject_name: str, module_name: str, filename: str) -> str | None:
@@ -474,9 +495,13 @@ async def _generate_module_icon(subject_name: str, module_name: str, filename: s
         icon_prompt = await loop.run_in_executor(
             None, _generate_icon_prompt_sync, client, settings.openai_hierarchy_model, subject_name, module_name, filename,
         )
-        png_bytes = await loop.run_in_executor(
-            None, _render_and_strip_background_sync, client, settings.openai_icon_model, icon_prompt,
+        # Rendering is a network call — fine to overlap with other files.
+        raw_image_bytes = await loop.run_in_executor(
+            None, _render_image_sync, client, settings.openai_icon_model, icon_prompt,
         )
+        # Background removal is CPU-bound, so it goes through the gate one at a time.
+        async with _rembg_gate():
+            png_bytes = await loop.run_in_executor(None, _strip_background_sync, raw_image_bytes)
 
         from services.pdf_processor import upload_bytes_to_gcs
         safe_name = re.sub(r'[^a-zA-Z0-9]', '_', module_name).upper()
